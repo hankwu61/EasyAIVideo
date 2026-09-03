@@ -1,0 +1,67 @@
+# EasyAIVideo configuration
+# Copy to config.yaml (or just start the server: it creates config.yaml with these defaults).
+# Everything here can also be edited from the web UI (Settings page).
+
+llm:
+  # openai_compat = any OpenAI-compatible chat API (OpenAI, DeepSeek, Qwen, Ollama, LM Studio ...)
+  # mock          = no LLM; splits your text into scenes (good for testing the pipeline)
+  provider: mock
+  api_key: ""
+  base_url: "https://api.openai.com/v1"
+  model: "gpt-4o-mini"
+  temperature: 0.8
+
+tts:
+  # edge          = Microsoft Edge neural voices (free, needs internet)
+  # openai_compat = OpenAI-style /audio/speech endpoint
+  # silent        = silent audio with estimated duration (offline testing)
+  provider: edge
+  voice: "zh-TW-HsiaoChenNeural"
+  speed: 1.0
+  api_key: ""
+  base_url: "https://api.openai.com/v1"
+  model: "tts-1"
+
+image:
+  # placeholder   = locally drawn gradient cards (offline testing)
+  # openai_compat = OpenAI-style /images/generations endpoint (dall-e-3, gpt-image-1, many proxies)
+  # comfyui       = local ComfyUI server running a workflow from data/workflows/comfyui/
+  provider: placeholder
+  api_key: ""
+  base_url: "https://api.openai.com/v1"
+  model: "dall-e-3"
+  size_portrait: "1024x1792"
+  size_landscape: "1792x1024"
+  size_square: "1024x1024"
+  size_mode: preset       # preset = the three fixed sizes above (DALL-E); exact = WxH from the project aspect ratio (Agnes, gpt-image proxies)
+  short_edge: 1024        # short edge used by size_mode: exact
+  use_references: false   # send character sheets as image-to-image references (Agnes image models)
+  comfyui_url: "http://127.0.0.1:8188"
+  comfyui_workflow: "image_default.json"
+  prompt_prefix: ""
+  negative_prompt: "text, watermark, logo, blurry, low quality, deformed"
+
+video:
+  # kenburns = animate still images with ffmpeg (no AI video model needed)
+  # comfyui  = image-to-video workflow on ComfyUI
+  # agnes    = Agnes AI async video API (text-to-video / image-to-video / first+last frame)
+  # AI providers are only used when a project selects motion = ai_video.
+  provider: kenburns
+  api_key: ""
+  base_url: "https://apihub.agnes-ai.com/v1"
+  model: "agnes-video-v2.0"
+  resolution: 720p        # 480p | 720p | 1080p (short edge; aspect follows the project)
+  mode: i2v               # i2v = scene image is the first frame; t2v = prompt only; keyframes = next scene image as last frame
+  max_clip_seconds: 10    # 1-18; longer narrations loop the clip
+  concurrency: 1          # parallel video jobs (Agnes is sensitive to concurrency)
+  poll_timeout: 1800
+  comfyui_url: "http://127.0.0.1:8188"
+  comfyui_workflow: "video_default.json"
+  fps: 30
+
+render:
+  font_path: ""          # leave empty to auto-detect a CJK-capable system font
+  subtitle_size: 56
+  bgm_volume: 0.2
+  crf: 23
+  ffmpeg_path: ""        # leave empty to use ffmpeg from PATH

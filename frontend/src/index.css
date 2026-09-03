@@ -1,0 +1,159 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #0b0f14;
+  --color-bg-elev: #0f141b;
+  --color-panel: #121820;
+  --color-panel-2: #171e28;
+  --color-border: #1e2733;
+  --color-border-strong: #2b3644;
+  --color-text: #e6edf3;
+  --color-muted: #8b98a8;
+  --color-faint: #5f6b7a;
+  --color-accent: #7c6cff;
+  --color-accent-strong: #6d5cff;
+  --color-accent-soft: #2a2650;
+  --color-indigo-glow: #4f46e5;
+  --color-success: #34d399;
+  --color-warning: #fbbf24;
+  --color-danger: #f87171;
+  --font-sans: "Inter", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --radius-xl: 0.875rem;
+  --shadow-card: 0 1px 0 0 rgb(255 255 255 / 0.02) inset, 0 8px 24px -12px rgb(0 0 0 / 0.6);
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-bg text-text antialiased;
+    font-family: var(--font-sans);
+    background-image:
+      radial-gradient(1200px 500px at 15% -10%, rgb(124 108 255 / 0.10), transparent 60%),
+      radial-gradient(900px 400px at 95% 0%, rgb(79 70 229 / 0.08), transparent 60%);
+    background-repeat: no-repeat;
+  }
+  ::selection {
+    background: rgb(124 108 255 / 0.35);
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #2b3644 transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: #2b3644;
+    border-radius: 999px;
+  }
+  input[type="range"] {
+    @apply h-1.5 w-full cursor-pointer appearance-none rounded-full bg-border-strong accent-accent;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    @apply h-4 w-4 appearance-none rounded-full border-2 border-bg bg-accent shadow;
+  }
+  input[type="range"]::-moz-range-thumb {
+    @apply h-4 w-4 rounded-full border-2 border-bg bg-accent shadow;
+  }
+  audio {
+    color-scheme: dark;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-border bg-panel;
+    box-shadow: var(--shadow-card);
+  }
+  .label {
+    @apply mb-1.5 block text-xs font-medium tracking-wide text-muted;
+  }
+  .input {
+    @apply w-full rounded-lg border border-border bg-bg-elev px-3 py-2 text-sm text-text placeholder:text-faint outline-none transition;
+    @apply focus:border-accent focus:ring-2 focus:ring-accent/25 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  select.input {
+    @apply cursor-pointer pr-8;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238b98a8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 0.6rem center;
+    appearance: none;
+  }
+  textarea.input {
+    @apply min-h-20 resize-y leading-relaxed;
+  }
+  /* Shared button base (Tailwind v4 cannot @apply custom classes, so group the selectors). */
+  .btn,
+  .btn-primary,
+  .btn-secondary,
+  .btn-ghost,
+  .btn-danger,
+  .btn-icon {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg border border-transparent px-3.5 py-2 text-sm font-medium transition select-none;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply bg-accent text-white hover:bg-accent-strong;
+    box-shadow: 0 0 0 1px rgb(124 108 255 / 0.4), 0 8px 20px -8px rgb(124 108 255 / 0.6);
+  }
+  .btn-secondary {
+    @apply border-border bg-panel-2 text-text hover:border-border-strong hover:bg-panel;
+  }
+  .btn-ghost {
+    @apply text-muted hover:bg-panel-2 hover:text-text;
+  }
+  .btn-danger {
+    @apply border-danger/30 bg-danger/10 text-danger hover:bg-danger/20;
+  }
+  .btn-sm {
+    @apply px-2.5 py-1.5 text-xs;
+  }
+  .btn-icon {
+    @apply h-8 w-8 p-0;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] font-medium leading-4;
+  }
+  .skeleton {
+    @apply animate-pulse rounded-lg bg-panel-2;
+  }
+  .menu {
+    @apply absolute right-0 z-20 mt-1 min-w-44 overflow-hidden rounded-lg border border-border bg-panel-2 py-1 shadow-xl;
+  }
+  .menu-item {
+    @apply flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-text hover:bg-panel disabled:opacity-50;
+  }
+  .menu-sep {
+    @apply my-1 border-t border-border;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-fade-in {
+  animation: fade-in 0.18s ease-out both;
+}
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+.progress-shimmer {
+  background-image: linear-gradient(90deg, #7c6cff 0%, #a78bfa 50%, #7c6cff 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.6s linear infinite;
+}

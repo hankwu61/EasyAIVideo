@@ -1,0 +1,69 @@
+{
+  "1": {
+    "class_type": "ImageOnlyCheckpointLoader",
+    "inputs": { "ckpt_name": "svd_xt_1_1.safetensors" },
+    "_meta": { "title": "Load SVD checkpoint (edit ckpt_name to a model you have)" }
+  },
+  "2": {
+    "class_type": "LoadImage",
+    "inputs": { "image": "{{image}}", "upload": "image" },
+    "_meta": { "title": "Load Image (filled by EasyAIVideo)" }
+  },
+  "3": {
+    "class_type": "SVD_img2vid_Conditioning",
+    "inputs": {
+      "width": 1024,
+      "height": 576,
+      "video_frames": 25,
+      "motion_bucket_id": 127,
+      "fps": 8,
+      "augmentation_level": 0.0,
+      "clip_vision": ["1", 1],
+      "init_image": ["2", 0],
+      "vae": ["1", 2]
+    },
+    "_meta": { "title": "SVD img2vid Conditioning" }
+  },
+  "4": {
+    "class_type": "VideoLinearCFGGuidance",
+    "inputs": { "min_cfg": 1.0, "model": ["1", 0] },
+    "_meta": { "title": "Linear CFG Guidance" }
+  },
+  "5": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": "{{seed}}",
+      "steps": 20,
+      "cfg": 2.5,
+      "sampler_name": "euler",
+      "scheduler": "karras",
+      "denoise": 1.0,
+      "model": ["4", 0],
+      "positive": ["3", 0],
+      "negative": ["3", 1],
+      "latent_image": ["3", 2]
+    },
+    "_meta": { "title": "KSampler" }
+  },
+  "6": {
+    "class_type": "VAEDecode",
+    "inputs": { "samples": ["5", 0], "vae": ["1", 2] },
+    "_meta": { "title": "VAE Decode" }
+  },
+  "7": {
+    "class_type": "VHS_VideoCombine",
+    "inputs": {
+      "frame_rate": 8,
+      "loop_count": 0,
+      "filename_prefix": "easyaivideo",
+      "format": "video/h264-mp4",
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": false,
+      "pingpong": false,
+      "save_output": true,
+      "images": ["6", 0]
+    },
+    "_meta": { "title": "Video Combine (requires ComfyUI-VideoHelperSuite). Unused placeholders available: {{prompt}} {{width}} {{height}} {{fps}} {{frames}} {{duration}}" }
+  }
+}

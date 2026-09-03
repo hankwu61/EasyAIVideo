@@ -1,0 +1,48 @@
+{
+  "3": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": "{{seed}}",
+      "steps": 25,
+      "cfg": 6.5,
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "karras",
+      "denoise": 1.0,
+      "model": ["4", 0],
+      "positive": ["6", 0],
+      "negative": ["7", 0],
+      "latent_image": ["5", 0]
+    },
+    "_meta": { "title": "KSampler" }
+  },
+  "4": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": { "ckpt_name": "sd_xl_base_1.0.safetensors" },
+    "_meta": { "title": "Load Checkpoint (edit ckpt_name to a model you have)" }
+  },
+  "5": {
+    "class_type": "EmptyLatentImage",
+    "inputs": { "width": "{{width}}", "height": "{{height}}", "batch_size": 1 },
+    "_meta": { "title": "Empty Latent Image" }
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": { "text": "{{prompt}}", "clip": ["4", 1] },
+    "_meta": { "title": "Positive prompt" }
+  },
+  "7": {
+    "class_type": "CLIPTextEncode",
+    "inputs": { "text": "{{negative_prompt}}", "clip": ["4", 1] },
+    "_meta": { "title": "Negative prompt" }
+  },
+  "8": {
+    "class_type": "VAEDecode",
+    "inputs": { "samples": ["3", 0], "vae": ["4", 2] },
+    "_meta": { "title": "VAE Decode" }
+  },
+  "9": {
+    "class_type": "SaveImage",
+    "inputs": { "filename_prefix": "easyaivideo", "images": ["8", 0] },
+    "_meta": { "title": "Save Image" }
+  }
+}

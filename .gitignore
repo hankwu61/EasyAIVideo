@@ -1,0 +1,13 @@
+config.yaml
+data/projects/
+data/*.db*
+data/bgm/*
+!data/bgm/.gitkeep
+frontend/node_modules/
+frontend/dist/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.log
+scratch/
