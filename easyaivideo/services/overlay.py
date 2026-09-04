@@ -22,6 +22,7 @@ def render_overlay(
     speaker: Optional[str] = None,
     font_path: str = "",
     subtitle_size: int = 56,
+    subtitle_position: str = "bottom",
 ) -> Path:
     img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
@@ -52,8 +53,18 @@ def render_overlay(
         speaker_h = int(size * 0.72 * 1.4) if speaker else 0
         if speaker and speaker_font is not None:
             block_w = max(block_w, int(speaker_font.getlength(speaker)))
-        bottom = int(height * (0.82 if portrait else 0.90))
-        top = bottom - block_h - speaker_h
+
+        total_h = block_h + speaker_h
+        if subtitle_position == "middle":
+            top = int((height - total_h) / 2)
+            bottom = top + total_h
+        elif subtitle_position == "top":
+            top = int(height * (0.18 if (title and portrait) else 0.10))
+            bottom = top + total_h
+        else:  # "bottom"
+            bottom = int(height * (0.82 if portrait else 0.90))
+            top = bottom - total_h
+
         pad_x, pad_y = int(size * 0.6), int(size * 0.35)
         box = [
             (width - block_w) // 2 - pad_x,

@@ -11,6 +11,19 @@ from PIL import ImageFont
 
 from ..config import RESOURCES_DIR
 
+FONT_ID_MAP: dict[str, list[str]] = {
+    "msjh": ["C:/Windows/Fonts/msjh.ttc", "C:/Windows/Fonts/msjhbd.ttc"],
+    "msyh": ["C:/Windows/Fonts/msyh.ttc", "C:/Windows/Fonts/msyhbd.ttc"],
+    "simhei": ["C:/Windows/Fonts/simhei.ttf"],
+    "arial": ["C:/Windows/Fonts/arial.ttf", "/System/Library/Fonts/Supplemental/Arial.ttf"],
+    "noto": [
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+        "C:/Windows/Fonts/msjh.ttc",
+    ],
+    "system": [],
+}
+
 FONT_CANDIDATES = [
     "C:/Windows/Fonts/msjh.ttc",  # Microsoft JhengHei (Traditional Chinese)
     "C:/Windows/Fonts/msyh.ttc",  # Microsoft YaHei (Simplified Chinese)
@@ -27,11 +40,14 @@ FONT_CANDIDATES = [
 ]
 
 
-@lru_cache(maxsize=8)
+@lru_cache(maxsize=16)
 def find_font(preferred: str = "") -> Optional[str]:
     candidates: list[str] = []
     if preferred:
-        candidates.append(preferred)
+        if preferred in FONT_ID_MAP:
+            candidates.extend(FONT_ID_MAP[preferred])
+        else:
+            candidates.append(preferred)
     fonts_dir = RESOURCES_DIR / "fonts"
     if fonts_dir.exists():
         candidates += [str(p) for p in sorted(fonts_dir.iterdir()) if p.suffix.lower() in (".ttf", ".ttc", ".otf")]

@@ -21,7 +21,7 @@ CONFIG_PATH = Path(os.environ.get("EASYAIVIDEO_CONFIG", ROOT_DIR / "config.yaml"
 DB_PATH = DATA_DIR / "easyaivideo.db"
 
 SECRET_MASK = "***"
-SECRET_FIELDS = {"api_key"}
+SECRET_FIELDS = {"api_key", "client_secret", "refresh_token", "access_token", "secret"}
 
 
 class LLMConfig(BaseModel):
@@ -101,6 +101,38 @@ class ReviewConfig(BaseModel):
     concurrency: int = Field(2, ge=1, le=4)
 
 
+class YouTubeConfig(BaseModel):
+    enabled: bool = True
+    mock: bool = True  # Sandbox test mode
+    client_id: str = ""
+    client_secret: str = ""
+    refresh_token: str = ""
+    default_privacy: Literal["public", "unlisted", "private"] = "public"
+    default_tags: str = "Shorts, AI, EasyAIVideo"
+
+
+class TikTokConfig(BaseModel):
+    enabled: bool = True
+    mock: bool = True  # Sandbox test mode
+    client_key: str = ""
+    client_secret: str = ""
+    access_token: str = ""
+    default_privacy: Literal["public", "unlisted", "private"] = "public"
+    default_tags: str = "fyp, shorts, easyaivideo"
+
+
+class WebhookConfig(BaseModel):
+    enabled: bool = False
+    url: str = ""
+    secret: str = ""
+
+
+class PublishConfig(BaseModel):
+    youtube: YouTubeConfig = YouTubeConfig()
+    tiktok: TikTokConfig = TikTokConfig()
+    webhook: WebhookConfig = WebhookConfig()
+
+
 class AppConfig(BaseModel):
     llm: LLMConfig = LLMConfig()
     tts: TTSConfig = TTSConfig()
@@ -108,6 +140,7 @@ class AppConfig(BaseModel):
     video: VideoConfig = VideoConfig()
     render: RenderConfig = RenderConfig()
     review: ReviewConfig = ReviewConfig()
+    publish: PublishConfig = PublishConfig()
 
 
 def _deep_merge(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:

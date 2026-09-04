@@ -48,9 +48,9 @@ def refresh_scene_status(project: Project, scene: Scene) -> None:
         scene.status = "failed"
         return
     have = {
-        "audio": bool(scene.audio_path) and not scene.audio_stale,
-        "image": bool(scene.image_path) and not scene.image_stale,
-        "video": bool(scene.video_path) and not scene.video_stale,
+        "audio": bool(scene.audio_path) and not scene.audio_stale and storage.abs_path(scene.audio_path).exists(),
+        "image": bool(scene.image_path) and not scene.image_stale and storage.abs_path(scene.image_path).exists(),
+        "video": bool(scene.video_path) and not scene.video_stale and storage.abs_path(scene.video_path).exists(),
     }
     required = _required_kinds(project)
     done = sum(1 for k in required if have[k])
@@ -62,7 +62,7 @@ def refresh_project_status(project: Project) -> None:
         refresh_scene_status(project, scene)
     all_ready = all(s.status == "ready" for s in project.scenes)
     final_ok = bool(project.final_video_path) and storage.abs_path(project.final_video_path or "").exists()
-    segments_current = all(s.segment_path for s in project.scenes)
+    segments_current = all(bool(s.segment_path) and storage.abs_path(s.segment_path).exists() for s in project.scenes)
     if not project.scenes:
         project.status = "draft"
     elif final_ok and all_ready and segments_current:
@@ -258,11 +258,14 @@ class Pipeline:
         jobs: list[tuple[Scene, set[str]]] = []
         for scene in targets:
             todo: set[str] = set()
-            if "audio" in wanted and (force or not scene.audio_path or scene.audio_stale):
+            has_audio = bool(scene.audio_path) and storage.abs_path(scene.audio_path).exists()
+            has_image = bool(scene.image_path) and storage.abs_path(scene.image_path).exists()
+            has_video = bool(scene.video_path) and storage.abs_path(scene.video_path).exists()
+            if "audio" in wanted and (force or not has_audio or scene.audio_stale):
                 todo.add("audio")
-            if "image" in wanted and (force or not scene.image_path or scene.image_stale):
+            if "image" in wanted and (force or not has_image or scene.image_stale):
                 todo.add("image")
-            if need_video and (force or not scene.video_path or scene.video_stale or "image" in todo):
+            if need_video and (force or not has_video or scene.video_stale or "image" in todo):
                 todo.add("video")
             if todo:
                 scene.error = None
@@ -300,6 +303,7 @@ class Pipeline:
             assert tts is not None
             rel = storage.scene_rel(project.id, scene.id, "audio", "mp3")
             path = storage.abs_path(rel)
+            path.parent.mkdir(parents=True, exist_ok=True)
             spoken = [ln for ln in scene.lines if speakable(ln.text)]
             if scene.lines and not spoken:
                 raise ProviderError("這個場景沒有可朗讀的台詞。")
@@ -406,7 +410,15 @@ class Pipeline:
         return project
 
     # ------------------------------------------------------------ render
-    def _scene_overlays(self, project: Project, scene: Scene, scene_dir: Path, font_path: str, size: int) -> tuple[Optional[Path], list[ffmpeg.TimedOverlay]]:
+    def _scene_overlays(
+        self,
+        project: Project,
+        scene: Scene,
+        scene_dir: Path,
+        font_path: str,
+        size: int,
+        subtitle_position: str = "bottom",
+    ) -> tuple[Optional[Path], list[ffmpeg.TimedOverlay]]:
         """Static (title) overlay plus per-line subtitle overlays for drama scenes."""
         title = project.title if project.show_title else None
         spoken = [ln for ln in scene.lines if speakable(ln.text)]
@@ -415,11 +427,30 @@ class Pipeline:
             static = None
             if title:
                 static = scene_dir / "overlay_title.png"
-                render_overlay(static, project.width, project.height, title=title, subtitle=None, font_path=font_path, subtitle_size=size)
+                render_overlay(
+                    static,
+                    project.width,
+                    project.height,
+                    title=title,
+                    subtitle=None,
+                    font_path=font_path,
+                    subtitle_size=size,
+                    subtitle_position=subtitle_position,
+                )
             t = 0.0
             for i, ln in enumerate(spoken):
                 path = scene_dir / f"overlay_line_{i:02d}.png"
-                render_overlay(path, project.width, project.height, title=None, subtitle=ln.text, speaker=ln.speaker, font_path=font_path, subtitle_size=size)
+                render_overlay(
+                    path,
+                    project.width,
+                    project.height,
+                    title=None,
+                    subtitle=ln.text,
+                    speaker=ln.speaker,
+                    font_path=font_path,
+                    subtitle_size=size,
+                    subtitle_position=subtitle_position,
+                )
                 end = t + (ln.duration or 0) + LINE_GAP_SECONDS
                 timed.append((path, t, end + (SCENE_TAIL_SECONDS if i == len(spoken) - 1 else 0)))
                 t = end
@@ -428,28 +459,49 @@ class Pipeline:
         if not title and not subtitle:
             return None, []
         static = scene_dir / "overlay.png"
-        render_overlay(static, project.width, project.height, title=title, subtitle=subtitle, font_path=font_path, subtitle_size=size)
+        render_overlay(
+            static,
+            project.width,
+            project.height,
+            title=title,
+            subtitle=subtitle,
+            font_path=font_path,
+            subtitle_size=size,
+            subtitle_position=subtitle_position,
+        )
         return static, []
 
     async def render(self, project: Project, progress: Progress) -> Project:
         if not project.scenes:
             raise PipelineError("專案還沒有場景，請先產生腳本。")
-        missing = [s.index + 1 for s in project.scenes if not s.audio_path or not s.image_path]
-        if missing:
-            raise PipelineError(f"場景 {missing} 缺少語音或圖片，請先產生素材。")
+        missing_audio = [s.index + 1 for s in project.scenes if not s.audio_path or not storage.abs_path(s.audio_path).exists()]
+        missing_image = [s.index + 1 for s in project.scenes if not s.image_path or not storage.abs_path(s.image_path).exists()]
+        if missing_audio or missing_image:
+            details = []
+            if missing_audio:
+                details.append(f"語音遺失（場景 {missing_audio}）")
+            if missing_image:
+                details.append(f"圖片遺失（場景 {missing_image}）")
+            raise PipelineError(f"無法合成影片：{'、'.join(details)}，請先點擊「產生素材」。")
         if project.motion == "ai_video":
-            no_clip = [s.index + 1 for s in project.scenes if not s.video_path]
-            if no_clip:
-                raise PipelineError(f"場景 {no_clip} 缺少 AI 影片片段，請先產生素材。")
+            missing_clip = [s.index + 1 for s in project.scenes if not s.video_path or not storage.abs_path(s.video_path).exists()]
+            if missing_clip:
+                raise PipelineError(f"無法合成影片：場景 {missing_clip} 缺少 AI 影片片段檔案，請先產生素材。")
 
         cfg = config_manager.get()
         fps = cfg.video.fps
+        font_pref = project.font_family or cfg.render.font_path
+        font_size = int(project.font_size * 2.333 * (project.width / 1080.0)) if project.font_size else cfg.render.subtitle_size
+        sub_pos = project.subtitle_position or "bottom"
+
         segments: list[Path] = []
         n = len(project.scenes)
         for i, scene in enumerate(project.scenes):
             await progress(0.05 + 0.75 * i / n, f"合成場景 {i + 1}/{n}…")
             scene_dir = storage.project_dir(project.id) / "scenes" / scene.id
-            static, timed = await asyncio.to_thread(self._scene_overlays, project, scene, scene_dir, cfg.render.font_path, cfg.render.subtitle_size)
+            static, timed = await asyncio.to_thread(
+                self._scene_overlays, project, scene, scene_dir, font_pref, font_size, sub_pos
+            )
             duration = (scene.duration or await ffmpeg.probe_duration(storage.abs_path(scene.audio_path or ""))) + SCENE_TAIL_SECONDS
             rel = storage.scene_rel(project.id, scene.id, "segment", "mp4")
             await ffmpeg.render_segment(
@@ -468,7 +520,16 @@ class Pipeline:
         out_dir = storage.project_dir(project.id) / "output"
         out_dir.mkdir(parents=True, exist_ok=True)
         joined = out_dir / "joined.mp4"
-        await ffmpeg.concat(segments, joined)
+        trans = project.transition or "none"
+        trans_dur = project.transition_duration or 0.5
+        await ffmpeg.concat_with_transitions(
+            segments,
+            joined,
+            transition=trans,
+            duration=trans_dur,
+            crf=cfg.render.crf,
+            fps=fps,
+        )
         total = await ffmpeg.probe_duration(joined)
 
         final_rel = storage.output_rel(project.id, "final", "mp4")

@@ -13,13 +13,27 @@ AspectRatio = Literal["9:16", "16:9", "1:1"]
 Motion = Literal["kenburns", "static", "ai_video"]
 ProjectStatus = Literal["draft", "scripted", "assets_ready", "rendered"]
 SceneStatus = Literal["pending", "partial", "ready", "failed"]
-TaskType = Literal["script", "assets", "render", "full", "analyze", "plan", "character_image", "review"]
+TaskType = Literal["script", "assets", "render", "full", "analyze", "plan", "character_image", "review", "publish"]
 TaskStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
 AssetKind = Literal["audio", "image", "video"]
 Kind = Literal["single", "series", "episode"]
 VideoMode = Literal["i2v", "t2v", "keyframes"]
 ContentMode = Literal["narration", "drama"]
 Gender = Literal["female", "male", "other"]
+PublishPlatform = Literal["youtube", "tiktok", "webhook"]
+PublishStatus = Literal["idle", "scheduled", "publishing", "published", "failed"]
+PublishPrivacy = Literal["public", "unlisted", "private"]
+SubtitlePosition = Literal["bottom", "middle", "top"]
+TransitionEffect = Literal[
+    "none",
+    "fade",
+    "dissolve",
+    "wipeleft",
+    "wiperight",
+    "slideup",
+    "slidedown",
+    "circlecrop",
+]
 
 ASPECT_SIZES: dict[str, tuple[int, int]] = {
     "9:16": (1080, 1920),
@@ -200,6 +214,89 @@ class ProjectReview(BaseModel):
         return round(sum(scored) / len(scored), 2) if scored else 0.0
 
 
+class PublishRecord(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("pub"))
+    platform: PublishPlatform
+    status: Literal["succeeded", "failed"] = "succeeded"
+    video_id: Optional[str] = None
+    url: Optional[str] = None
+    title: str = ""
+    scheduled_at: Optional[str] = None
+    published_at: str = Field(default_factory=now_iso)
+    error: Optional[str] = None
+
+
+class ProjectPublishSettings(BaseModel):
+    enabled: bool = False
+    auto_publish: bool = False
+    platforms: list[PublishPlatform] = Field(default_factory=lambda: ["youtube", "tiktok"])
+    schedule_mode: Literal["immediate", "scheduled"] = "immediate"
+    schedule_time: Optional[str] = None
+    privacy: PublishPrivacy = "public"
+    title_template: str = "{title} #Shorts"
+    description_template: str = "{topic}\n\nCreated with EasyAIVideo\n#Shorts #TikTok"
+    tags: list[str] = Field(default_factory=lambda: ["Shorts", "AI", "EasyAIVideo"])
+
+
+class TemplateConfig(BaseModel):
+    """The 5 key dimensions of a video template."""
+
+    # 1. Style
+    style_id: str = "cinematic"
+    style_prompt: str = ""
+    # 2. Font
+    font_family: str = "msjh"
+    font_size: int = 24
+    # 3. Subtitle Position
+    subtitle_position: SubtitlePosition = "bottom"
+    # 4. Transition
+    transition: TransitionEffect = "none"
+    transition_duration: float = 0.5
+    # 5. BGM
+    bgm: Optional[str] = None
+    bgm_volume: float = 0.2
+
+
+class Template(BaseModel):
+    id: str
+    name: str
+    description: str = ""
+    category: str = "general"
+    cover_color: Optional[str] = None
+    icon: Optional[str] = None
+    is_builtin: bool = False
+    config: TemplateConfig = Field(default_factory=TemplateConfig)
+    created_at: str = Field(default_factory=now_iso)
+    updated_at: str = Field(default_factory=now_iso)
+
+
+class TemplateCreate(BaseModel):
+    name: str
+    description: str = ""
+    category: str = "custom"
+    cover_color: Optional[str] = None
+    icon: Optional[str] = None
+    config: TemplateConfig
+
+
+class TemplateUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    category: Optional[str] = None
+    cover_color: Optional[str] = None
+    icon: Optional[str] = None
+    config: Optional[TemplateConfig] = None
+
+
+class TemplateSharePayload(BaseModel):
+    name: str
+    description: str = ""
+    category: str = "custom"
+    cover_color: Optional[str] = None
+    icon: Optional[str] = None
+    config: TemplateConfig
+
+
 class ProjectSettings(BaseModel):
     """Fields a user can edit after creation."""
 
@@ -216,11 +313,18 @@ class ProjectSettings(BaseModel):
     bgm: Optional[str] = None
     bgm_volume: float = Field(0.2, ge=0.0, le=1.0)
     subtitle_enabled: bool = True
+    subtitle_position: SubtitlePosition = "bottom"
+    font_family: str = "msjh"
+    font_size: int = Field(24, ge=12, le=72)
     show_title: bool = True
+    transition: TransitionEffect = "none"
+    transition_duration: float = Field(0.5, ge=0.1, le=2.0)
+    template_id: Optional[str] = None
     motion: Motion = "kenburns"
     video_mode: Optional[VideoMode] = None  # None = use the system default (config.video.mode)
     content_mode: ContentMode = "narration"
     episode_target_seconds: int = Field(120, ge=30, le=600)
+    publish_settings: ProjectPublishSettings = Field(default_factory=ProjectPublishSettings)
 
 
 class Project(ProjectSettings):
@@ -243,6 +347,8 @@ class Project(ProjectSettings):
     locations: list[Location] = Field(default_factory=list)
     episodes: list[Episode] = Field(default_factory=list)
     review: Optional[ProjectReview] = None
+    publish_status: PublishStatus = "idle"
+    publish_records: list[PublishRecord] = Field(default_factory=list)
     created_at: str = Field(default_factory=now_iso)
     updated_at: str = Field(default_factory=now_iso)
 
@@ -321,7 +427,13 @@ class ProjectUpdate(BaseModel):
     bgm: Optional[str] = None
     bgm_volume: Optional[float] = Field(None, ge=0.0, le=1.0)
     subtitle_enabled: Optional[bool] = None
+    subtitle_position: Optional[SubtitlePosition] = None
+    font_family: Optional[str] = None
+    font_size: Optional[int] = Field(None, ge=12, le=72)
     show_title: Optional[bool] = None
+    transition: Optional[TransitionEffect] = None
+    transition_duration: Optional[float] = Field(None, ge=0.1, le=2.0)
+    template_id: Optional[str] = None
     motion: Optional[Motion] = None
     video_mode: Optional[VideoMode] = None
     content_mode: Optional[ContentMode] = None
@@ -329,6 +441,17 @@ class ProjectUpdate(BaseModel):
     overview: Optional[Overview] = None
     characters: Optional[list[Character]] = None
     locations: Optional[list[Location]] = None
+    publish_settings: Optional[ProjectPublishSettings] = None
+
+
+class PublishRequest(BaseModel):
+    platforms: Optional[list[PublishPlatform]] = None
+    schedule_time: Optional[str] = None
+    auto_publish: Optional[bool] = None
+    privacy: Optional[PublishPrivacy] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    tags: Optional[list[str]] = None
 
 
 class SceneUpdate(BaseModel):

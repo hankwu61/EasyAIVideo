@@ -197,6 +197,71 @@ async def concat(segments: list[Path], output: Path) -> Path:
     return output
 
 
+async def concat_with_transitions(
+    segments: list[Path],
+    output: Path,
+    transition: str = "none",
+    duration: float = 0.5,
+    crf: int = 18,
+    fps: int = 30,
+) -> Path:
+    """Concatenate video segments with optional xfade and acrossfade transitions."""
+    if not segments:
+        raise FFmpegError("No segments to concatenate")
+    if len(segments) == 1 or transition == "none":
+        return await concat(segments, output)
+
+    # Probe duration of each segment
+    durs: list[float] = []
+    for s in segments:
+        d = await probe_duration(s)
+        durs.append(d)
+
+    min_dur = min(durs)
+    eff_trans_dur = min(duration, min_dur / 2.0)
+    if eff_trans_dur <= 0.05:
+        return await concat(segments, output)
+
+    inputs: list[str] = []
+    for s in segments:
+        inputs.extend(["-i", str(s)])
+
+    v_filter_parts: list[str] = []
+    a_filter_parts: list[str] = []
+
+    last_v = "0:v"
+    last_a = "0:a"
+    cum_dur = durs[0]
+
+    for i in range(1, len(segments)):
+        offset = cum_dur - eff_trans_dur
+        next_v = f"v{i}"
+        next_a = f"a{i}"
+        v_filter_parts.append(
+            f"[{last_v}][{i}:v]xfade=transition={transition}:duration={eff_trans_dur:.3f}:offset={offset:.3f}[{next_v}]"
+        )
+        a_filter_parts.append(
+            f"[{last_a}][{i}:a]acrossfade=d={eff_trans_dur:.3f}[{next_a}]"
+        )
+        last_v = next_v
+        last_a = next_a
+        cum_dur = offset + durs[i]
+
+    filter_complex = ";".join(v_filter_parts + a_filter_parts)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    await run([
+        *inputs,
+        "-filter_complex", filter_complex,
+        "-map", f"[{last_v}]",
+        "-map", f"[{last_a}]",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", str(crf), "-r", str(fps), "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "192k", "-ar", "44100",
+        "-movflags", "+faststart",
+        str(output),
+    ])
+    return output
+
+
 async def mix_bgm(video: Path, bgm: Path, volume: float, duration: float, output: Path) -> Path:
     fade_out_start = max(duration - 2.5, 0.0)
     graph = (

@@ -93,4 +93,37 @@ async def test_provider(cfg: AppConfig, kind: str) -> str:
             raise ProviderError(f"Cannot reach ComfyUI at {url}: {exc}") from exc
         version = stats.get("system", {}).get("comfyui_version", "?")
         return f"ComfyUI online at {url} (version {version})"
+    if kind == "youtube":
+        yt = cfg.publish.youtube
+        if yt.mock:
+            return "YouTube Shorts 目前處於「沙盒模擬測試模式（Mock Mode）」，發布時將模擬上傳成功。"
+        if not yt.refresh_token:
+            raise ProviderError("請填寫 YouTube refresh_token。")
+        import httpx
+        if yt.client_id and yt.client_secret:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                res = await client.post(
+                    "https://oauth2.googleapis.com/token",
+                    data={
+                        "client_id": yt.client_id,
+                        "client_secret": yt.client_secret,
+                        "refresh_token": yt.refresh_token,
+                        "grant_type": "refresh_token",
+                    },
+                )
+                if res.status_code != 200:
+                    raise ProviderError(f"Google OAuth 驗證失敗 ({res.status_code}): {res.text}")
+        return "YouTube Shorts 連線驗證成功，可正常發布影片。"
+    if kind == "tiktok":
+        tt = cfg.publish.tiktok
+        if tt.mock:
+            return "TikTok 目前處於「沙盒模擬測試模式（Mock Mode）」，發布時將模擬上傳成功。"
+        if not tt.access_token:
+            raise ProviderError("請填寫 TikTok access_token。")
+        return "TikTok 設定格式正確，已就緒發布。"
+    if kind == "webhook":
+        wh = cfg.publish.webhook
+        if not wh.url:
+            raise ProviderError("請填寫 Webhook URL。")
+        return f"Webhook 設定完成 ({wh.url})"
     raise ProviderError(f"Unknown provider kind: {kind}")

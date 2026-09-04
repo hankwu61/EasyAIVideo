@@ -1,6 +1,6 @@
 import type { MutableRefObject } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowLeft, Clapperboard, FileText, Images, ScanEye, Sparkles } from 'lucide-react'
+import { ArrowLeft, Clapperboard, FileText, Images, ScanEye, Share2, Sparkles } from 'lucide-react'
 import { useLang } from '../i18n'
 import type { Project } from '../types'
 import { Spinner, StatusBadge } from './ui'
@@ -16,6 +16,7 @@ interface StudioHeaderProps {
   onAssets: () => void
   onRender: () => void
   onReview: () => void
+  onPublish: () => void
   onAll: () => void
 }
 
@@ -40,12 +41,14 @@ export default function StudioHeader({
   onAssets,
   onRender,
   onReview,
+  onPublish,
   onAll,
 }: StudioHeaderProps) {
   const { t } = useLang()
   const hasScenes = project.scenes.length > 0
   const hasVideo = !!project.final_video_url
   const isEpisode = project.kind === 'episode' && !!project.parent_id
+  const isScheduled = project.publish_status === 'scheduled'
 
   return (
     <div className="mb-4">
@@ -71,6 +74,11 @@ export default function StudioHeader({
           <span className="chip border-border-strong bg-panel-2 text-muted">{t('content_mode_drama')}</span>
         )}
         <StatusBadge status={project.status} />
+        {isScheduled && (
+          <span className="chip border-accent/40 bg-accent/15 text-accent font-medium">
+            {t('publish_status_scheduled')}
+          </span>
+        )}
         <span className="chip border-border-strong bg-panel-2 text-muted tabular-nums">
           {project.aspect_ratio} · {t('video_size_chip', { w: project.width, h: project.height })}
         </span>
@@ -94,6 +102,15 @@ export default function StudioHeader({
             {t('review_button')}
           </button>
         </span>
+        <button
+          type="button"
+          className={`btn-secondary ${isScheduled ? 'border-accent/60 bg-accent/10 text-accent' : ''}`}
+          disabled={busy}
+          onClick={onPublish}
+        >
+          <Share2 size={15} />
+          {t('publish_button')}
+        </button>
         <button type="button" className="btn-primary" disabled={busy} onClick={onAll}>
           {busy ? <Spinner size={15} /> : <Sparkles size={15} />}
           {t('gen_all')}

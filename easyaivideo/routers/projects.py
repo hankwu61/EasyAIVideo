@@ -5,7 +5,21 @@ from typing import Any
 from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile, status
 
 from ..deps import projects, task_queue
-from ..models import AssetsRequest, EpisodeUpdate, Project, ProjectCreate, ProjectUpdate, SceneCreate, SceneReorder, SceneUpdate, Task
+from ..models import (
+    AssetsRequest,
+    EpisodeUpdate,
+    Project,
+    ProjectCreate,
+    ProjectUpdate,
+    PublishRequest,
+    SceneCreate,
+    SceneReorder,
+    SceneUpdate,
+    Task,
+    new_id,
+    now_iso,
+)
+from ..services import storage
 from ..services.project_service import NotFound
 from ..services.series import SeriesError
 from ..services.source_loader import SourceError
@@ -323,3 +337,68 @@ async def generate_episode(project_id: str, index: int) -> Task:
         return await task_queue.submit(child_id, "full")
     except ActiveTaskError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, f"第 {index} 集已有任務執行中 ({exc.task.type})。") from exc
+
+
+@router.post("/{project_id}/publish", response_model=Task, status_code=status.HTTP_202_ACCEPTED)
+async def publish_video(project_id: str, body: Optional[PublishRequest] = None) -> Task:
+    try:
+        project = await projects.get(project_id)
+    except NotFound as exc:
+        raise _404(exc) from exc
+
+    if not project.final_video_path or not storage.abs_path(project.final_video_path).exists():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "請先合成影片後再進行發布。")
+
+    payload: dict[str, Any] = {}
+    if body:
+        if body.platforms:
+            project.publish_settings.platforms = body.platforms
+            payload["platforms"] = body.platforms
+        if body.privacy:
+            project.publish_settings.privacy = body.privacy
+            payload["privacy"] = body.privacy
+        if body.schedule_time is not None:
+            project.publish_settings.schedule_time = body.schedule_time
+            payload["schedule_time"] = body.schedule_time
+        if body.auto_publish is not None:
+            project.publish_settings.auto_publish = body.auto_publish
+        if body.title:
+            payload["title"] = body.title
+        if body.description:
+            payload["description"] = body.description
+        if body.tags:
+            payload["tags"] = body.tags
+
+    sched = body.schedule_time if body and body.schedule_time is not None else project.publish_settings.schedule_time
+    if sched and sched > now_iso():
+        project.publish_status = "scheduled"
+        project.publish_settings.schedule_mode = "scheduled"
+        await projects.db.save_project(project)
+        task = Task(
+            id=new_id("task"),
+            project_id=project_id,
+            type="publish",
+            status="queued",
+            message=f"已排程於 {sched} 發布",
+            payload=payload,
+        )
+        return task
+
+    project.publish_status = "publishing"
+    await projects.db.save_project(project)
+    return await _submit(project_id, "publish", payload)
+
+
+@router.delete("/{project_id}/publish/schedule", response_model=Project)
+async def cancel_publish_schedule(project_id: str) -> Project:
+    try:
+        project = await projects.get(project_id)
+    except NotFound as exc:
+        raise _404(exc) from exc
+
+    project.publish_settings.schedule_time = None
+    project.publish_settings.schedule_mode = "immediate"
+    if project.publish_status == "scheduled":
+        project.publish_status = "idle"
+    await projects.db.save_project(project)
+    return project

@@ -11,6 +11,7 @@ from ..models import Task, TaskType, new_id, now_iso
 from ..providers.base import ProviderError
 from .ffmpeg import FFmpegError
 from .pipeline import Pipeline, PipelineError, refresh_project_status
+from .publisher import PublishError, PublisherService
 from .review import ReviewError
 
 log = logging.getLogger("easyaivideo.tasks")
@@ -118,6 +119,8 @@ class TaskQueue:
                 from .review import ReviewService
 
                 result = await ReviewService(self.db).run(project, progress)
+            elif task.type == "publish":
+                result = await PublisherService(self.db).publish(project, progress, payload)
             else:
                 result = await self.pipeline.full(project, progress)
             return {"status": result.status, "final_video_url": result.final_video_url, "scene_count": len(result.scenes)}
@@ -132,7 +135,7 @@ class TaskQueue:
             elif inner.exception() is not None:
                 exc = inner.exception()
                 task.status = "failed"
-                if isinstance(exc, (PipelineError, ProviderError, FFmpegError, ReviewError)):
+                if isinstance(exc, (PipelineError, ProviderError, FFmpegError, ReviewError, PublishError)):
                     task.error = str(exc)
                 else:
                     log.exception("task %s failed", task_id, exc_info=exc)
@@ -141,6 +144,8 @@ class TaskQueue:
             else:
                 task.status, task.progress, task.result = "succeeded", 1.0, inner.result()
                 task.message = task.message or "完成"
+                if task.type in ("render", "full"):
+                    asyncio.create_task(self._check_auto_publish(project.id))
         finally:
             task.finished_at = now_iso()
             await self.db.save_task(task)
@@ -150,3 +155,20 @@ class TaskQueue:
             if latest is not None and task.status in ("cancelled", "failed") and latest.kind != "series":
                 refresh_project_status(latest)
                 await self.db.save_project(latest)
+
+    async def _check_auto_publish(self, project_id: str) -> None:
+        await asyncio.sleep(0.5)
+        try:
+            proj = await self.db.get_project(project_id)
+            if not proj or not proj.publish_settings.auto_publish:
+                return
+            sched = proj.publish_settings.schedule_time
+            if proj.publish_settings.schedule_mode == "scheduled" and sched and sched > now_iso():
+                proj.publish_status = "scheduled"
+                await self.db.save_project(proj)
+                log.info("Project %s scheduled for auto-publish at %s", project_id, sched)
+            else:
+                await self.submit(project_id, "publish")
+                log.info("Submitted auto-publish task for project %s", project_id)
+        except Exception:
+            log.exception("Error checking auto-publish for %s", project_id)

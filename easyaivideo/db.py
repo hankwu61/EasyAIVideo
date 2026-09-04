@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from .config import DB_PATH, ensure_dirs
-from .models import Project, Task
+from .models import Project, Task, Template
 
 
 class Base(DeclarativeBase):
@@ -39,6 +39,16 @@ class TaskRow(Base):
     created_at: Mapped[str] = mapped_column(String(40))
     started_at: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
     finished_at: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+
+
+class TemplateRow(Base):
+    __tablename__ = "templates"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(128))
+    category: Mapped[str] = mapped_column(String(64), default="general")
+    created_at: Mapped[str] = mapped_column(String(40))
+    updated_at: Mapped[str] = mapped_column(String(40))
+    data: Mapped[str] = mapped_column(Text)
 
 
 class Database:
@@ -142,6 +152,72 @@ class Database:
                 r.error = reason
                 r.finished_at = now_iso()
             await s.commit()
+
+    # ---- templates ------------------------------------------------------
+    async def list_templates(self) -> list[Template]:
+        from .presets import BUILTIN_TEMPLATES
+
+        templates: list[Template] = [Template.model_validate(t) for t in BUILTIN_TEMPLATES]
+
+        async with self.session() as s:
+            rows = (await s.execute(select(TemplateRow).order_by(TemplateRow.created_at.desc()))).scalars().all()
+            for r in rows:
+                try:
+                    templates.append(Template.model_validate_json(r.data))
+                except Exception:
+                    pass
+        return templates
+
+    async def get_template(self, template_id: str) -> Optional[Template]:
+        from .presets import BUILTIN_TEMPLATES
+
+        for t in BUILTIN_TEMPLATES:
+            if t["id"] == template_id:
+                return Template.model_validate(t)
+
+        async with self.session() as s:
+            row = await s.get(TemplateRow, template_id)
+            if row:
+                try:
+                    return Template.model_validate_json(row.data)
+                except Exception:
+                    return None
+            return None
+
+    async def save_template(self, template: Template) -> Template:
+        from .models import now_iso
+
+        template.updated_at = now_iso()
+        payload = template.model_dump_json()
+        async with self.session() as s:
+            row = await s.get(TemplateRow, template.id)
+            if row is None:
+                s.add(
+                    TemplateRow(
+                        id=template.id,
+                        name=template.name,
+                        category=template.category,
+                        created_at=template.created_at,
+                        updated_at=template.updated_at,
+                        data=payload,
+                    )
+                )
+            else:
+                row.name = template.name
+                row.category = template.category
+                row.updated_at = template.updated_at
+                row.data = payload
+            await s.commit()
+        return template
+
+    async def delete_template(self, template_id: str) -> bool:
+        async with self.session() as s:
+            row = await s.get(TemplateRow, template_id)
+            if not row:
+                return False
+            await s.execute(delete(TemplateRow).where(TemplateRow.id == template_id))
+            await s.commit()
+            return True
 
 
 db = Database()

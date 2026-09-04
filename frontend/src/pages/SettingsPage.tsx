@@ -5,6 +5,7 @@ import HealthCard from '../components/settings/HealthCard'
 import { ImageSection, RenderSection } from '../components/settings/MediaSections'
 import { LlmSection, TtsSection } from '../components/settings/ProviderSections'
 import ReviewSection from '../components/settings/ReviewSection'
+import PublishSection from '../components/settings/PublishSection'
 import VideoSection from '../components/settings/VideoSection'
 import { DEFAULT_VIDEO_MODES } from '../components/ProjectSettingsFields'
 import { useToast } from '../components/Toast'
@@ -151,6 +152,7 @@ export default function SettingsPage() {
               videoModes={presets?.video_modes ?? DEFAULT_VIDEO_MODES}
             />
             <RenderSection value={config.render} onChange={section('render')} />
+            <PublishSection value={config.publish} onChange={section('publish')} beforeTest={beforeTest} />
 
             <div className="sticky bottom-4 flex justify-end">
               <div className="card flex items-center gap-3 px-4 py-3 shadow-2xl">

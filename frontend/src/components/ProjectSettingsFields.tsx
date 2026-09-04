@@ -1,7 +1,16 @@
 import { useMemo } from 'react'
 import { Check, Music, RectangleHorizontal, RectangleVertical, Square } from 'lucide-react'
 import { useLang } from '../i18n'
-import type { AspectRatio, AspectRatioPreset, BgmOption, IdLabel, VideoMode, VoiceOption } from '../types'
+import type {
+  AspectRatio,
+  AspectRatioPreset,
+  BgmOption,
+  IdLabel,
+  SubtitlePosition,
+  TransitionEffect,
+  VideoMode,
+  VoiceOption,
+} from '../types'
 import { cx } from '../utils'
 import { Field, Toggle } from './ui'
 
@@ -16,6 +25,11 @@ export interface OutputSettings {
   video_mode: VideoMode | null
   subtitle_enabled: boolean
   show_title: boolean
+  font_family?: string
+  font_size?: number
+  subtitle_position?: SubtitlePosition
+  transition?: TransitionEffect
+  transition_duration?: number
 }
 
 /** Fallback when the backend does not return `presets.video_modes`. */
@@ -191,6 +205,89 @@ export function OutputSettingsFields({
           label={t('show_title')}
           disabled={disabled}
         />
+      </div>
+
+      {value.subtitle_enabled && (
+        <div className="space-y-3 rounded-xl border border-border/80 bg-bg-elev/40 p-3">
+          <div className={cx('grid gap-3', compact ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-2')}>
+            <Field label={t('font_family')}>
+              <select
+                className="input"
+                value={value.font_family || 'msjh'}
+                onChange={(e) => onChange({ font_family: e.target.value })}
+                disabled={disabled}
+              >
+                <option value="msjh">微軟正黑體</option>
+                <option value="msyh">微軟雅黑</option>
+                <option value="simhei">黑體 / 粗黑</option>
+                <option value="arial">Arial</option>
+                <option value="noto">思源黑體</option>
+                <option value="system">系統預設</option>
+              </select>
+            </Field>
+
+            <Field label={t('font_size')} right={`${value.font_size || 24} pt`}>
+              <input
+                type="range"
+                min={14}
+                max={48}
+                step={1}
+                value={value.font_size || 24}
+                onChange={(e) => onChange({ font_size: Number(e.target.value) })}
+                disabled={disabled}
+              />
+            </Field>
+          </div>
+
+          <Field label={t('subtitle_position')}>
+            <select
+              className="input"
+              value={value.subtitle_position || 'bottom'}
+              onChange={(e) => onChange({ subtitle_position: e.target.value as SubtitlePosition })}
+              disabled={disabled}
+            >
+              <option value="bottom">{t('position_bottom')}（標準底端）</option>
+              <option value="middle">{t('position_middle')}（短影音中央居中）</option>
+              <option value="top">{t('position_top')}（畫面頂部）</option>
+            </select>
+          </Field>
+        </div>
+      )}
+
+      {/* Transition effect & duration */}
+      <div className="space-y-2 rounded-xl border border-border/80 bg-bg-elev/40 p-3">
+        <div className={cx('grid gap-3', compact ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-2')}>
+          <Field label={t('transition')}>
+            <select
+              className="input"
+              value={value.transition || 'none'}
+              onChange={(e) => onChange({ transition: e.target.value as TransitionEffect })}
+              disabled={disabled}
+            >
+              <option value="none">無轉場（直接接續）</option>
+              <option value="fade">淡入淡出 (Fade)</option>
+              <option value="dissolve">疊化 (Dissolve)</option>
+              <option value="wipeleft">向左擦除 (Wipe Left)</option>
+              <option value="wiperight">向右擦除 (Wipe Right)</option>
+              <option value="slideup">向上滑動 (Slide Up)</option>
+              <option value="slidedown">向下滑動 (Slide Down)</option>
+              <option value="circlecrop">圓形縮放 (Circle Crop)</option>
+            </select>
+          </Field>
+
+          <Field label={t('transition_duration')} right={`${(value.transition_duration ?? 0.5).toFixed(1)}s`}>
+            <input
+              type="range"
+              min={0.2}
+              max={1.5}
+              step={0.1}
+              value={value.transition_duration ?? 0.5}
+              onChange={(e) => onChange({ transition_duration: parseFloat(e.target.value) })}
+              disabled={disabled || value.transition === 'none'}
+              className={cx(value.transition === 'none' && 'opacity-40')}
+            />
+          </Field>
+        </div>
       </div>
     </div>
   )

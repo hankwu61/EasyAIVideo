@@ -56,6 +56,9 @@ export default function Layout() {
             <NavLink to="/" end className={navClass}>
               {t('nav_projects')}
             </NavLink>
+            <NavLink to="/templates" className={navClass}>
+              {t('nav_templates')}
+            </NavLink>
             <NavLink to="/settings" className={navClass}>
               {t('nav_settings')}
             </NavLink>

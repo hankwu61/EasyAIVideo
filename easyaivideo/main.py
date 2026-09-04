@@ -15,9 +15,9 @@ from fastapi.staticfiles import StaticFiles
 from . import __version__
 from .config import FRONTEND_DIST, ensure_dirs
 from .db import db
-from .deps import task_queue
+from .deps import publish_scheduler, task_queue
 from .routers import config as config_router
-from .routers import files, projects, resources, tasks
+from .routers import files, projects, resources, tasks, templates
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("easyaivideo")
@@ -28,10 +28,12 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     ensure_dirs()
     await db.init()
     await task_queue.start()
+    await publish_scheduler.start()
     log.info("EasyAIVideo %s ready", __version__)
     try:
         yield
     finally:
+        await publish_scheduler.stop()
         await task_queue.stop()
         await db.close()
 
@@ -39,7 +41,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="EasyAIVideo", version=__version__, lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-for r in (config_router.router, resources.router, projects.router, tasks.router, files.router):
+for r in (config_router.router, resources.router, projects.router, tasks.router, files.router, templates.router):
     app.include_router(r)
 
 

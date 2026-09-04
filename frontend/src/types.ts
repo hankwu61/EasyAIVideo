@@ -93,6 +93,42 @@ export interface ReviewConfig {
   concurrency: number
 }
 
+export type PublishPlatform = 'youtube' | 'tiktok' | 'webhook'
+export type PublishStatus = 'idle' | 'scheduled' | 'publishing' | 'published' | 'failed'
+export type PublishPrivacy = 'public' | 'unlisted' | 'private'
+
+export interface YouTubeConfig {
+  enabled: boolean
+  mock: boolean
+  client_id: string
+  client_secret: string
+  refresh_token: string
+  default_privacy: PublishPrivacy
+  default_tags: string
+}
+
+export interface TikTokConfig {
+  enabled: boolean
+  mock: boolean
+  client_key: string
+  client_secret: string
+  access_token: string
+  default_privacy: PublishPrivacy
+  default_tags: string
+}
+
+export interface WebhookConfig {
+  enabled: boolean
+  url: string
+  secret: string
+}
+
+export interface PublishConfig {
+  youtube: YouTubeConfig
+  tiktok: TikTokConfig
+  webhook: WebhookConfig
+}
+
 export interface Config {
   llm: LlmConfig
   tts: TtsConfig
@@ -100,9 +136,10 @@ export interface Config {
   video: VideoConfig
   render: RenderConfig
   review: ReviewConfig
+  publish: PublishConfig
 }
 
-export type ConfigTestKind = 'llm' | 'tts' | 'image' | 'comfyui' | 'video' | 'review'
+export type ConfigTestKind = 'llm' | 'tts' | 'image' | 'comfyui' | 'video' | 'review' | 'youtube' | 'tiktok' | 'webhook'
 
 export interface ConfigTestResult {
   ok: boolean
@@ -140,6 +177,82 @@ export interface Presets {
   content_modes?: IdLabel[]
   kinds?: IdLabel[]
   video_modes?: IdLabel[]
+  transitions?: TransitionOption[]
+  subtitle_positions?: SubtitlePositionOption[]
+  fonts?: FontOption[]
+}
+
+export type SubtitlePosition = 'bottom' | 'middle' | 'top'
+export type TransitionEffect = 'none' | 'fade' | 'dissolve' | 'wipeleft' | 'wiperight' | 'slideup' | 'slidedown' | 'circlecrop'
+
+export interface TransitionOption {
+  id: TransitionEffect
+  label: string
+  description?: string
+}
+
+export interface SubtitlePositionOption {
+  id: SubtitlePosition
+  label: string
+  description?: string
+}
+
+export interface FontOption {
+  id: string
+  label: string
+  family?: string
+  description?: string
+}
+
+export interface TemplateConfig {
+  style_id: string
+  style_prompt: string
+  font_family: string
+  font_size: number
+  subtitle_position: SubtitlePosition
+  transition: TransitionEffect
+  transition_duration: number
+  bgm: string | null
+  bgm_volume: number
+}
+
+export interface Template {
+  id: string
+  name: string
+  description: string
+  category: string
+  cover_color: string | null
+  icon: string | null
+  is_builtin: boolean
+  config: TemplateConfig
+  created_at: string
+  updated_at: string
+}
+
+export interface TemplateCreate {
+  name: string
+  description?: string
+  category?: string
+  cover_color?: string | null
+  icon?: string | null
+  config: TemplateConfig
+}
+
+export interface TemplateExportResult {
+  filename: string
+  data: {
+    version: string
+    type: string
+    template: {
+      name: string
+      description: string
+      category: string
+      cover_color?: string | null
+      icon?: string | null
+      config: TemplateConfig
+    }
+  }
+  share_code: string
 }
 
 export interface StyleOption {
@@ -287,7 +400,13 @@ export interface ProjectBase {
   bgm: string | null
   bgm_volume: number
   subtitle_enabled: boolean
+  subtitle_position?: SubtitlePosition
+  font_family?: string
+  font_size?: number
   show_title: boolean
+  transition?: TransitionEffect
+  transition_duration?: number
+  template_id?: string | null
   motion: string
   /** null = use the system default (`Config.video.mode`). Only meaningful when motion == "ai_video". */
   video_mode: VideoMode | null
@@ -307,8 +426,45 @@ export interface ProjectBase {
   final_video_size: number | null
   thumbnail_url: string | null
   active_task: Task | null
+  publish_settings: ProjectPublishSettings
+  publish_status: PublishStatus
+  publish_records: PublishRecord[]
   created_at: string
   updated_at: string
+}
+
+export interface PublishRecord {
+  id: string
+  platform: PublishPlatform
+  status: 'succeeded' | 'failed'
+  video_id: string | null
+  url: string | null
+  title: string
+  scheduled_at: string | null
+  published_at: string
+  error: string | null
+}
+
+export interface ProjectPublishSettings {
+  enabled: boolean
+  auto_publish: boolean
+  platforms: PublishPlatform[]
+  schedule_mode: 'immediate' | 'scheduled'
+  schedule_time: string | null
+  privacy: PublishPrivacy
+  title_template: string
+  description_template: string
+  tags: string[]
+}
+
+export interface PublishRequest {
+  platforms?: PublishPlatform[]
+  schedule_time?: string | null
+  auto_publish?: boolean
+  privacy?: PublishPrivacy
+  title?: string
+  description?: string
+  tags?: string[]
 }
 
 // ---------- AI review ----------
@@ -364,7 +520,13 @@ export interface ProjectCreate {
   bgm: string | null
   bgm_volume: number
   subtitle_enabled: boolean
+  subtitle_position?: SubtitlePosition
+  font_family?: string
+  font_size?: number
   show_title: boolean
+  transition?: TransitionEffect
+  transition_duration?: number
+  template_id?: string | null
   motion: string
   video_mode?: VideoMode | null
   auto_start: boolean
@@ -391,13 +553,20 @@ export type ProjectPatch = Partial<
     | 'bgm'
     | 'bgm_volume'
     | 'subtitle_enabled'
+    | 'subtitle_position'
+    | 'font_family'
+    | 'font_size'
     | 'show_title'
+    | 'transition'
+    | 'transition_duration'
+    | 'template_id'
     | 'motion'
     | 'video_mode'
     | 'content_mode'
     | 'episode_target_seconds'
     | 'overview'
     | 'locations'
+    | 'publish_settings'
   >
 > & {
   /** Full replacement list. */
@@ -429,7 +598,7 @@ export interface AssetsRequest {
 }
 
 // ---------- Tasks ----------
-export type TaskType = 'script' | 'assets' | 'render' | 'full' | 'analyze' | 'plan' | 'character_image' | 'review'
+export type TaskType = 'script' | 'assets' | 'render' | 'full' | 'analyze' | 'plan' | 'character_image' | 'review' | 'publish'
 export type TaskStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
 
 export interface Task {

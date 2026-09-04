@@ -5,7 +5,20 @@ from typing import Any
 from fastapi import APIRouter
 
 from ..config import BGM_DIR, WORKFLOWS_DIR, config_manager
-from ..presets import ASPECT_RATIOS, CONTENT_MODES, INPUT_MODES, KINDS, LANGUAGES, LLM_PRESETS, MOTIONS, STYLES, VIDEO_MODES
+from ..presets import (
+    ASPECT_RATIOS,
+    CONTENT_MODES,
+    FONTS,
+    INPUT_MODES,
+    KINDS,
+    LANGUAGES,
+    LLM_PRESETS,
+    MOTIONS,
+    STYLES,
+    SUBTITLE_POSITIONS,
+    TRANSITIONS,
+    VIDEO_MODES,
+)
 from ..providers.registry import get_tts
 
 router = APIRouter(prefix="/api/resources", tags=["resources"])
@@ -23,7 +36,25 @@ async def presets() -> dict[str, Any]:
         "content_modes": CONTENT_MODES,
         "kinds": KINDS,
         "video_modes": VIDEO_MODES,
+        "transitions": TRANSITIONS,
+        "subtitle_positions": SUBTITLE_POSITIONS,
+        "fonts": FONTS,
     }
+
+
+@router.get("/transitions")
+async def transitions() -> list[dict[str, str]]:
+    return TRANSITIONS
+
+
+@router.get("/subtitle-positions")
+async def subtitle_positions() -> list[dict[str, str]]:
+    return SUBTITLE_POSITIONS
+
+
+@router.get("/fonts")
+async def fonts() -> list[dict[str, str]]:
+    return FONTS
 
 
 @router.get("/styles")

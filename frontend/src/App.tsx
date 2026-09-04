@@ -6,6 +6,7 @@ import NewProjectPage from './pages/NewProjectPage'
 import StudioPage from './pages/StudioPage'
 import SeriesPage from './pages/SeriesPage'
 import SettingsPage from './pages/SettingsPage'
+import { TemplatesPage } from './pages/TemplatesPage'
 
 export default function App() {
   return (
@@ -15,6 +16,7 @@ export default function App() {
           <Route element={<Layout />}>
             <Route path="/" element={<ProjectsPage />} />
             <Route path="/new" element={<NewProjectPage />} />
+            <Route path="/templates" element={<TemplatesPage />} />
             <Route path="/projects/:id" element={<StudioPage />} />
             <Route path="/series/:id" element={<SeriesPage />} />
             <Route path="/settings" element={<SettingsPage />} />

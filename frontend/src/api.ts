@@ -12,11 +12,18 @@ import type {
   ProjectCreate,
   ProjectPatch,
   ProjectSummary,
+  PublishRequest,
   SceneCreate,
   ScenePatch,
   StyleOption,
   Task,
   TaskListParams,
+  Template,
+  TemplateCreate,
+  TemplateExportResult,
+  TransitionOption,
+  SubtitlePositionOption,
+  FontOption,
   UploadKind,
   VoiceOption,
   Workflows,
@@ -154,6 +161,12 @@ const proj = (id: string) => `/api/projects/${encodeURIComponent(id)}`
 export const reviewProject = (projectId: string) => request<Task>(`${proj(projectId)}/review`, { method: 'POST' })
 export const clearReview = (projectId: string) => request<Project>(`${proj(projectId)}/review`, { method: 'DELETE' })
 
+// ---------- Publishing ----------
+export const publishProject = (projectId: string, body?: PublishRequest) =>
+  request<Task>(`${proj(projectId)}/publish`, { method: 'POST', json: body })
+export const cancelPublishSchedule = (projectId: string) =>
+  request<Project>(`${proj(projectId)}/publish/schedule`, { method: 'DELETE' })
+
 export const uploadSource = (projectId: string, file: File) => {
   const form = new FormData()
   form.append('file', file, file.name)
@@ -192,3 +205,23 @@ export const listTasks = (params: TaskListParams = {}) => {
 export const getTask = (taskId: string) => request<Task>(`/api/tasks/${encodeURIComponent(taskId)}`)
 export const cancelTask = (taskId: string) =>
   request<Task>(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, { method: 'POST' })
+
+// ---------- Templates ----------
+export const listTemplates = () => request<Template[]>('/api/templates')
+export const getTemplate = (id: string) => request<Template>(`/api/templates/${encodeURIComponent(id)}`)
+export const createTemplate = (body: TemplateCreate) =>
+  request<Template>('/api/templates', { method: 'POST', json: body })
+export const createTemplateFromProject = (projectId: string, body: TemplateCreate) =>
+  request<Template>(`/api/templates/from-project/${encodeURIComponent(projectId)}`, { method: 'POST', json: body })
+export const updateTemplate = (id: string, body: Partial<TemplateCreate>) =>
+  request<Template>(`/api/templates/${encodeURIComponent(id)}`, { method: 'PUT', json: body })
+export const deleteTemplate = (id: string) =>
+  request<{ ok: boolean }>(`/api/templates/${encodeURIComponent(id)}`, { method: 'DELETE' })
+export const exportTemplate = (id: string) =>
+  request<TemplateExportResult>(`/api/templates/${encodeURIComponent(id)}/export`)
+export const importTemplate = (body: { data?: string; template?: unknown }) =>
+  request<Template>('/api/templates/import', { method: 'POST', json: body })
+
+export const getTransitions = () => request<TransitionOption[]>('/api/resources/transitions')
+export const getSubtitlePositions = () => request<SubtitlePositionOption[]>('/api/resources/subtitle-positions')
+export const getFonts = () => request<FontOption[]>('/api/resources/fonts')

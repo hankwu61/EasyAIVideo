@@ -1,16 +1,17 @@
 import { useEffect, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Info, ScanSearch, Sparkles, Wand2 } from 'lucide-react'
-import { analyzeProject, createProject, errorMessage, uploadSource } from '../api'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { ArrowLeft, Info, LayoutTemplate, ScanSearch, Sparkles, Wand2 } from 'lucide-react'
+import { analyzeProject, createProject, errorMessage, listTemplates, uploadSource } from '../api'
 import KindPicker, { DEFAULT_KINDS } from '../components/new/KindPicker'
 import SeriesContentCard, { DEFAULT_CONTENT_MODES, type SeriesContent } from '../components/new/SeriesContentCard'
 import VisualCard, { type VisualSettings } from '../components/new/VisualCard'
 import { DEFAULT_VIDEO_MODES, OutputSettingsFields, type OutputSettings } from '../components/ProjectSettingsFields'
+import { TemplateCard } from '../components/templates/TemplateCard'
 import { useToast } from '../components/Toast'
 import { ErrorAlert, Field, PageHeader, SectionCard, Skeleton, Spinner } from '../components/ui'
 import { useResources } from '../hooks/useResources'
 import { useLang } from '../i18n'
-import type { AspectRatio, InputMode, ProjectCreate, ProjectKind } from '../types'
+import type { AspectRatio, InputMode, ProjectCreate, ProjectKind, Template } from '../types'
 import { cx } from '../utils'
 
 interface FormState {
@@ -23,6 +24,7 @@ interface FormState {
   visual: VisualSettings
   series: SeriesContent
   output: OutputSettings
+  template_id?: string | null
 }
 
 type Phase = 'start' | 'create' | 'upload' | null
@@ -33,9 +35,17 @@ export default function NewProjectPage() {
   const navigate = useNavigate()
   const { resources, loading, error, reload } = useResources()
 
+  const [searchParams] = useSearchParams()
+  const templateIdParam = searchParams.get('template_id')
+  const [templates, setTemplates] = useState<Template[]>([])
+
   const [form, setForm] = useState<FormState | null>(null)
   const [submitting, setSubmitting] = useState<Phase>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
+
+  useEffect(() => {
+    listTemplates().then(setTemplates).catch(console.error)
+  }, [])
 
   // Seed the form once resources arrive.
   useEffect(() => {
@@ -73,11 +83,51 @@ export default function NewProjectPage() {
         video_mode: null,
         subtitle_enabled: true,
         show_title: true,
+        font_family: 'msjh',
+        font_size: 24,
+        subtitle_position: 'bottom',
+        transition: 'none',
+        transition_duration: 0.5,
       },
     })
   }, [resources, form])
 
   const update = (patch: Partial<FormState>) => setForm((f) => (f ? { ...f, ...patch } : f))
+
+  const applyTemplate = (tpl: Template | null) => {
+    if (!form) return
+    if (!tpl) {
+      update({ template_id: null })
+      return
+    }
+    update({
+      template_id: tpl.id,
+      visual: {
+        ...form.visual,
+        style_id: tpl.config.style_id,
+        style_prompt: tpl.config.style_prompt,
+      },
+      output: {
+        ...form.output,
+        font_family: tpl.config.font_family,
+        font_size: tpl.config.font_size,
+        subtitle_position: tpl.config.subtitle_position,
+        transition: tpl.config.transition,
+        transition_duration: tpl.config.transition_duration,
+        bgm: tpl.config.bgm,
+        bgm_volume: tpl.config.bgm_volume,
+      },
+    })
+  }
+
+  // Pre-select template from URL if present
+  useEffect(() => {
+    if (!templates.length || !form) return
+    if (templateIdParam && form.template_id !== templateIdParam) {
+      const found = templates.find((t) => t.id === templateIdParam)
+      if (found) applyTemplate(found)
+    }
+  }, [templates, templateIdParam, form])
 
   const submitSingle = async (form: FormState, autoStart: boolean) => {
     if (!form.topic.trim()) {
@@ -95,6 +145,7 @@ export default function NewProjectPage() {
       style_prompt: form.visual.style_prompt.trim() ? form.visual.style_prompt : null,
       n_scenes: form.n_scenes,
       ...form.output,
+      template_id: form.template_id ?? undefined,
       auto_start: autoStart,
     }
     const project = await createProject(body)
@@ -123,6 +174,7 @@ export default function NewProjectPage() {
       ...form.output,
       content_mode: s.content_mode,
       episode_target_seconds: s.episode_target_seconds,
+      template_id: form.template_id ?? undefined,
       source_text: hasFile ? undefined : s.source_text,
       // With a file the analysis must wait until the upload has finished.
       auto_start: hasFile ? false : autoStart,
@@ -205,6 +257,40 @@ export default function NewProjectPage() {
       }}
     >
       {header}
+
+      {/* Templates recommendation bar */}
+      {templates.length > 0 && (
+        <div className="mb-6 rounded-2xl border border-border bg-panel p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-sm font-bold text-text">
+              <LayoutTemplate className="w-4 h-4 text-accent" />
+              <span>{t('choose_template')}</span>
+              <span className="text-xs font-normal text-muted">（點選自動套用風格、字型、字幕位置、轉場與 BGM）</span>
+            </div>
+            {form?.template_id && (
+              <button
+                type="button"
+                onClick={() => applyTemplate(null)}
+                className="text-xs text-accent hover:underline transition-colors"
+              >
+                清除模板套用
+              </button>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {templates.map((tpl) => (
+              <TemplateCard
+                key={tpl.id}
+                template={tpl}
+                compact
+                isSelected={form?.template_id === tpl.id}
+                onSelect={() => applyTemplate(form?.template_id === tpl.id ? null : tpl)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
 
       <Field label={t('project_kind')} className="mb-6">
         <KindPicker kinds={presets.kinds ?? DEFAULT_KINDS} value={form.kind} onChange={(kind) => update({ kind })} />

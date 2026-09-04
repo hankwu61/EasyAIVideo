@@ -76,3 +76,26 @@ render:
   bgm_volume: 0.2
   crf: 23
   ffmpeg_path: ""        # leave empty to use ffmpeg from PATH
+
+publish:
+  youtube:
+    enabled: true
+    mock: true           # Sandbox mock mode (simulate uploads without Google API credentials)
+    client_id: ""
+    client_secret: ""
+    refresh_token: ""
+    default_privacy: "public"
+    default_tags: "Shorts, AI, EasyAIVideo"
+  tiktok:
+    enabled: true
+    mock: true           # Sandbox mock mode (simulate uploads without TikTok API credentials)
+    client_key: ""
+    client_secret: ""
+    access_token: ""
+    default_privacy: "public"
+    default_tags: "fyp, shorts, easyaivideo"
+  webhook:
+    enabled: false
+    url: ""
+    secret: ""
+

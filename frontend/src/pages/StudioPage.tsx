@@ -21,6 +21,7 @@ import {
 } from '../api'
 import ConfirmDialog from '../components/ConfirmDialog'
 import PreviewPanel from '../components/PreviewPanel'
+import PublishModal from '../components/PublishModal'
 import ReviewPanel from '../components/ReviewPanel'
 import SceneCard, { type SceneActions } from '../components/SceneCard'
 import StudioHeader, { BackLink } from '../components/StudioHeader'
@@ -48,6 +49,7 @@ export default function StudioPage() {
   const [confirmScript, setConfirmScript] = useState(false)
   const [pendingDeleteScene, setPendingDeleteScene] = useState<string | null>(null)
   const [deletingScene, setDeletingScene] = useState(false)
+  const [publishOpen, setPublishOpen] = useState(false)
 
   const [titleDraft, setTitleDraft] = useState('')
   const titleFocused = useRef(false)
@@ -284,6 +286,7 @@ export default function StudioPage() {
         onAssets={() => void startTask(() => generateAssets(id, { scene_ids: null, kinds: null, force: false }))}
         onRender={() => void startTask(() => renderProject(id))}
         onReview={() => void startTask(() => reviewProject(id))}
+        onPublish={() => setPublishOpen(true)}
         onAll={() => void startTask(() => generateAll(id))}
       />
 
@@ -400,6 +403,14 @@ export default function StudioPage() {
         confirmLabel={t('delete')}
         onCancel={() => !deletingScene && setPendingDeleteScene(null)}
         onConfirm={() => void confirmDeleteScene()}
+      />
+
+      <PublishModal
+        project={project}
+        isOpen={publishOpen}
+        onClose={() => setPublishOpen(false)}
+        onProjectUpdated={(p) => setProject(p)}
+        onPublishTriggered={() => void load(true)}
       />
     </div>
   )
