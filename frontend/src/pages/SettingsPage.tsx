@@ -4,6 +4,7 @@ import { errorMessage, getConfig, getHealth, getPresets, getVoices, getWorkflows
 import HealthCard from '../components/settings/HealthCard'
 import { ImageSection, RenderSection } from '../components/settings/MediaSections'
 import { LlmSection, TtsSection } from '../components/settings/ProviderSections'
+import ReviewSection from '../components/settings/ReviewSection'
 import VideoSection from '../components/settings/VideoSection'
 import { DEFAULT_VIDEO_MODES } from '../components/ProjectSettingsFields'
 import { useToast } from '../components/Toast'
@@ -139,6 +140,7 @@ export default function SettingsPage() {
               beforeTest={beforeTest}
               presets={presets?.llm_presets ?? []}
             />
+            <ReviewSection value={config.review} onChange={section('review')} beforeTest={beforeTest} />
             <TtsSection value={config.tts} onChange={section('tts')} beforeTest={beforeTest} voices={voices} />
             <ImageSection value={config.image} onChange={section('image')} beforeTest={beforeTest} workflows={workflows} />
             <VideoSection

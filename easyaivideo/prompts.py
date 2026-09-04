@@ -59,6 +59,58 @@ Return ONLY a JSON object with exactly {len(segments)} image prompts and {len(se
 """
 
 
+# ---- AI review ----------------------------------------------------------------
+
+
+def review_scene_prompt(
+    *,
+    index: int,
+    total: int,
+    narration: str,
+    image_prompt: str,
+    language: str,
+    n_frames: int,
+    characters: list[Character],
+    title: str,
+) -> str:
+    chars = _character_block(characters) if characters else "(none)"
+    return f"""You are reviewing a finished narrated short video, scene by scene. The {n_frames} attached image(s) are keyframes taken from the rendered video for ONE scene (they may include burned-in subtitles and a title overlay; ignore those overlays themselves).
+
+VIDEO TITLE: {title}
+SCENE INDEX: {index}
+SCENE {index} of {total}
+NARRATION spoken during this scene ({_lang(language)}):
+"{narration}"
+INTENDED IMAGE PROMPT (what the image generator was asked for):
+"{image_prompt}"
+CHARACTERS (if the narration mentions one, the visuals must match this appearance):
+{chars}
+
+CHECK
+1. Does the picture show what the narration talks about (subject, place, action, time of day, mood)? Anything mentioned in the narration but clearly missing or contradicted?
+2. Are there visible defects: garbled or unwanted text/logos in the image itself (NOT the subtitle overlay), extra limbs/fingers, distorted faces, wrong number of people, inconsistent character appearance?
+3. Is the scene visually readable at a glance (main subject clear, not too cluttered)?
+
+OUTPUT — JSON only, no code fence:
+{{"score": 1-5 (5 = perfect match, 3 = acceptable, 1 = unrelated or broken),
+ "match": true|false,
+ "issues": ["short concrete sentence per problem, in {_lang(language)}; empty list if none"],
+ "suggested_image_prompt": "if score <= 3: an improved ENGLISH image prompt (30-60 words) that would fix the issues while keeping the same style; otherwise empty string",
+ "note": "one sentence overall comment in {_lang(language)}"}}
+"""
+
+
+def review_summary_prompt(title: str, language: str, scene_lines: list[str]) -> str:
+    joined = "\n".join(scene_lines)
+    return f"""TASK: REVIEW_SUMMARY
+You reviewed every scene of the short video "{title}". SCENE REVIEWS (one per line: index | score | issues):
+{joined}
+
+Write a 2-4 sentence summary for the creator in {_lang(language)}: overall quality, which scenes need fixing first and why. Be concrete and brief.
+Return ONLY JSON, no code fence: {{"summary": "..."}}
+"""
+
+
 # ---- long-form documents ---------------------------------------------------
 
 

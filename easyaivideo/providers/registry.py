@@ -59,9 +59,21 @@ def get_video(cfg: AppConfig) -> Optional[VideoProvider]:
     return None
 
 
+def get_vision(cfg: AppConfig):
+    if cfg.llm.provider == "mock" and not cfg.review.model:
+        from .llm.vision import MockVision
+
+        return MockVision()
+    from .llm.vision import OpenAICompatVision
+
+    return OpenAICompatVision(cfg)
+
+
 async def test_provider(cfg: AppConfig, kind: str) -> str:
     if kind == "llm":
         return await get_llm(cfg).test()
+    if kind == "review":
+        return await get_vision(cfg).test()
     if kind == "tts":
         return await get_tts(cfg).test()
     if kind == "image":

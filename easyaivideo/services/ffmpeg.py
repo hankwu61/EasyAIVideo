@@ -76,6 +76,12 @@ async def make_silence(path: Path, seconds: float) -> Path:
     return path
 
 
+async def extract_frame(video: Path, seconds: float, output: Path, width: int = 768) -> Path:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    await run(["-ss", f"{max(seconds, 0):.3f}", "-i", str(video), "-frames:v", "1", "-vf", f"scale={width}:-2", "-q:v", "4", str(output)])
+    return output
+
+
 async def concat_audio(files: list[Path], gap: float, output: Path) -> Path:
     """Join several audio files into one mp3, inserting `gap` seconds of silence after each."""
     if not files:

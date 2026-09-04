@@ -13,7 +13,7 @@ AspectRatio = Literal["9:16", "16:9", "1:1"]
 Motion = Literal["kenburns", "static", "ai_video"]
 ProjectStatus = Literal["draft", "scripted", "assets_ready", "rendered"]
 SceneStatus = Literal["pending", "partial", "ready", "failed"]
-TaskType = Literal["script", "assets", "render", "full", "analyze", "plan", "character_image"]
+TaskType = Literal["script", "assets", "render", "full", "analyze", "plan", "character_image", "review"]
 TaskStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
 AssetKind = Literal["audio", "image", "video"]
 Kind = Literal["single", "series", "episode"]
@@ -164,6 +164,42 @@ class Episode(BaseModel):
         return max(self.source_end - self.source_start, 0)
 
 
+class SceneReview(BaseModel):
+    scene_id: str
+    index: int = 0
+    score: int = Field(3, ge=1, le=5)  # 5 = visuals fully match the narration
+    match: bool = True
+    issues: list[str] = Field(default_factory=list)
+    suggested_image_prompt: str = ""
+    note: str = ""
+    frame_paths: list[str] = Field(default_factory=list)
+    error: Optional[str] = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def frame_urls(self) -> list[str]:
+        return [f"/api/files/{p}" for p in self.frame_paths]
+
+
+class ProjectReview(BaseModel):
+    created_at: str = Field(default_factory=now_iso)
+    model: str = ""
+    video_path: Optional[str] = None  # the final video that was reviewed
+    summary: str = ""
+    scenes: list[SceneReview] = Field(default_factory=list)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def issue_count(self) -> int:
+        return sum(len(s.issues) for s in self.scenes)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def average_score(self) -> float:
+        scored = [s.score for s in self.scenes if not s.error]
+        return round(sum(scored) / len(scored), 2) if scored else 0.0
+
+
 class ProjectSettings(BaseModel):
     """Fields a user can edit after creation."""
 
@@ -206,6 +242,7 @@ class Project(ProjectSettings):
     characters: list[Character] = Field(default_factory=list)
     locations: list[Location] = Field(default_factory=list)
     episodes: list[Episode] = Field(default_factory=list)
+    review: Optional[ProjectReview] = None
     created_at: str = Field(default_factory=now_iso)
     updated_at: str = Field(default_factory=now_iso)
 

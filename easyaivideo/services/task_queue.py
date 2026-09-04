@@ -11,6 +11,7 @@ from ..models import Task, TaskType, new_id, now_iso
 from ..providers.base import ProviderError
 from .ffmpeg import FFmpegError
 from .pipeline import Pipeline, PipelineError, refresh_project_status
+from .review import ReviewError
 
 log = logging.getLogger("easyaivideo.tasks")
 
@@ -113,6 +114,10 @@ class TaskQueue:
                 result = await self.pipeline.plan_episodes(project, progress)
             elif task.type == "character_image":
                 result = await self.pipeline.character_image(project, str(payload.get("char_id", "")), progress)
+            elif task.type == "review":
+                from .review import ReviewService
+
+                result = await ReviewService(self.db).run(project, progress)
             else:
                 result = await self.pipeline.full(project, progress)
             return {"status": result.status, "final_video_url": result.final_video_url, "scene_count": len(result.scenes)}
@@ -127,7 +132,7 @@ class TaskQueue:
             elif inner.exception() is not None:
                 exc = inner.exception()
                 task.status = "failed"
-                if isinstance(exc, (PipelineError, ProviderError, FFmpegError)):
+                if isinstance(exc, (PipelineError, ProviderError, FFmpegError, ReviewError)):
                     task.error = str(exc)
                 else:
                     log.exception("task %s failed", task_id, exc_info=exc)

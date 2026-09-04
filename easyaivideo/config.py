@@ -86,12 +86,28 @@ class RenderConfig(BaseModel):
     ffmpeg_path: str = ""
 
 
+class ReviewConfig(BaseModel):
+    """AI review of the rendered video: keyframes + narration -> multimodal model.
+
+    Empty api_key / base_url / model fall back to the LLM settings, so an OpenAI-compatible
+    multimodal chat model (Agnes, GPT-4o, Qwen-VL, Gemini via proxy ...) is all that is needed.
+    """
+
+    api_key: str = ""
+    base_url: str = ""
+    model: str = ""
+    frames_per_scene: int = Field(2, ge=1, le=3)
+    frame_width: int = Field(768, ge=256, le=1920)
+    concurrency: int = Field(2, ge=1, le=4)
+
+
 class AppConfig(BaseModel):
     llm: LLMConfig = LLMConfig()
     tts: TTSConfig = TTSConfig()
     image: ImageConfig = ImageConfig()
     video: VideoConfig = VideoConfig()
     render: RenderConfig = RenderConfig()
+    review: ReviewConfig = ReviewConfig()
 
 
 def _deep_merge(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:

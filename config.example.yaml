@@ -59,6 +59,17 @@ video:
   comfyui_workflow: "video_default.json"
   fps: 30
 
+review:
+  # AI review of the rendered video: keyframes + narration -> multimodal chat model.
+  # Empty api_key / base_url / model reuse the llm section, so point it at a vision-capable
+  # OpenAI-compatible model (Agnes multimodal, gpt-4o, qwen-vl-max ...).
+  api_key: ""
+  base_url: ""
+  model: ""
+  frames_per_scene: 2     # 1-3 keyframes per scene
+  frame_width: 768        # keyframe width sent to the model
+  concurrency: 2
+
 render:
   font_path: ""          # leave empty to auto-detect a CJK-capable system font
   subtitle_size: 56

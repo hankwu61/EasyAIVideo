@@ -192,6 +192,29 @@ async def generate_all(project_id: str) -> Task:
     return await _submit(project_id, "full")
 
 
+@router.post("/{project_id}/review", response_model=Task, status_code=status.HTTP_202_ACCEPTED)
+async def review_project(project_id: str) -> Task:
+    """AI review: keyframes of the rendered video vs narration (multimodal model)."""
+    try:
+        project = await projects.get(project_id)
+    except NotFound as exc:
+        raise _404(exc) from exc
+    if not project.final_video_url:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "請先合成影片，AI 審片會檢查成品的關鍵幀。")
+    return await _submit(project_id, "review")
+
+
+@router.delete("/{project_id}/review", response_model=Project)
+async def clear_review(project_id: str) -> Project:
+    try:
+        project = await projects.get(project_id)
+    except NotFound as exc:
+        raise _404(exc) from exc
+    project.review = None
+    await projects.db.save_project(project)
+    return await projects.get(project_id)
+
+
 # ---- series: source documents ------------------------------------------
 
 

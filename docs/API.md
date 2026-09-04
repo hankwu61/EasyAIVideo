@@ -277,3 +277,36 @@ Asset generation with `motion == "ai_video"` now runs in two phases: audio + ima
 - **Upload your own image**: `POST /api/projects/{id}/scenes/{scene_id}/upload/image` multipart `file` (png/jpg/webp; existing). Clears `image_stale`; the AI clip (if any) becomes stale.
 - **Download one file**: any `/api/files/...` URL accepts `?download=1` (original filename) or `?download=<name>` (custom filename, extension appended if missing) and responds with `Content-Disposition: attachment`.
 - **Download all scene images**: `GET /api/projects/{id}/scenes/images.zip` → zip containing `scene01_image.png`, `scene02_image.png`, … plus `sceneNN_clip.mp4` for AI clips. 404 when the project has no images yet.
+
+---
+
+# Part 5: AI review (審片)
+
+Sends keyframes of the **rendered** video, scene by scene, together with the narration and the intended image
+prompt to a multimodal chat model and reports mismatches.
+
+`Config.review` (new section): `{ "api_key": "", "base_url": "", "model": "", "frames_per_scene": 2, "frame_width": 768, "concurrency": 2 }`.
+Empty `api_key` / `base_url` / `model` fall back to `Config.llm`, so any OpenAI-compatible multimodal model works
+(Agnes multimodal model, gpt-4o, qwen-vl, …). `POST /api/config/test/review` sends a tiny synthetic image and checks
+that the model can see it.
+
+`POST /api/projects/{id}/review` → `Task` (202, type `review`; 400 when the project has no rendered video; 409 when busy).
+`DELETE /api/projects/{id}/review` → `Project` (clears the stored review).
+
+`Project` gains `"review": ProjectReview | null`:
+```jsonc
+{ "created_at": "...", "model": "agnes-2.0-flash", "video_path": "proj_x/output/final_ab12.mp4",
+  "summary": "整體畫面與旁白相符，場景 3 需要修正…",
+  "issue_count": 3, "average_score": 3.8,
+  "scenes": [ { "scene_id": "s03", "index": 2, "score": 2, "match": false,
+                "issues": ["旁白提到夜市攤販，但畫面是空曠的街道", "畫面右下角出現亂碼文字"],
+                "suggested_image_prompt": "a crowded Taiwanese night market ...",   // empty when score >= 4
+                "note": "...", "frame_urls": ["/api/files/proj_x/scenes/s03/review_0_xxx.jpg", "..."],
+                "error": null } ] }
+```
+Applying a suggestion is done with the existing `PATCH /api/projects/{id}/scenes/{scene_id}` (`image_prompt`) followed by
+`POST generate/assets` with `kinds: ["image"]` (and `["image","video"]` for AI-video projects), then `POST render`.
+A review refers to the video that existed when it ran (`video_path`); after re-rendering, the UI should show it as outdated
+(compare with `Project.final_video_url`).
+
+Task `type` gains `review`.

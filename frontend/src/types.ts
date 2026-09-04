@@ -80,15 +80,29 @@ export interface RenderConfig {
   crf: number
 }
 
+/** AI review (審片). Empty api_key / base_url / model fall back to `Config.llm`. */
+export interface ReviewConfig {
+  /** Secret; masked as "***" by the server. */
+  api_key: string
+  base_url: string
+  model: string
+  /** 1–3 */
+  frames_per_scene: number
+  frame_width: number
+  /** 1–4 */
+  concurrency: number
+}
+
 export interface Config {
   llm: LlmConfig
   tts: TtsConfig
   image: ImageConfig
   video: VideoConfig
   render: RenderConfig
+  review: ReviewConfig
 }
 
-export type ConfigTestKind = 'llm' | 'tts' | 'image' | 'comfyui' | 'video'
+export type ConfigTestKind = 'llm' | 'tts' | 'image' | 'comfyui' | 'video' | 'review'
 
 export interface ConfigTestResult {
   ok: boolean
@@ -297,10 +311,37 @@ export interface ProjectBase {
   updated_at: string
 }
 
+// ---------- AI review ----------
+export interface SceneReview {
+  scene_id: string
+  index: number
+  /** 1–5 */
+  score: number
+  match: boolean
+  issues: string[]
+  /** Empty when the scene scored well. */
+  suggested_image_prompt: string
+  note: string
+  frame_urls: string[]
+  error: string | null
+}
+
+export interface ProjectReview {
+  created_at: string
+  model: string
+  /** Relative path of the video that was reviewed; compare with `final_video_url` to detect staleness. */
+  video_path: string
+  summary: string
+  issue_count: number
+  average_score: number
+  scenes: SceneReview[]
+}
+
 export interface Project extends ProjectBase {
   scenes: Scene[]
   /** Series only; [] otherwise. */
   episodes: Episode[]
+  review: ProjectReview | null
 }
 
 /** List view: no scenes / characters / locations / episodes. */
@@ -388,7 +429,7 @@ export interface AssetsRequest {
 }
 
 // ---------- Tasks ----------
-export type TaskType = 'script' | 'assets' | 'render' | 'full' | 'analyze' | 'plan' | 'character_image'
+export type TaskType = 'script' | 'assets' | 'render' | 'full' | 'analyze' | 'plan' | 'character_image' | 'review'
 export type TaskStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
 
 export interface Task {

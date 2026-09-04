@@ -16,10 +16,12 @@ import {
   patchScene,
   renderProject,
   reorderScenes,
+  reviewProject,
   uploadSceneAsset,
 } from '../api'
 import ConfirmDialog from '../components/ConfirmDialog'
 import PreviewPanel from '../components/PreviewPanel'
+import ReviewPanel from '../components/ReviewPanel'
 import SceneCard, { type SceneActions } from '../components/SceneCard'
 import StudioHeader, { BackLink } from '../components/StudioHeader'
 import StudioSettings from '../components/StudioSettings'
@@ -267,6 +269,7 @@ export default function StudioPage() {
   const hasScenes = project.scenes.length > 0
   const characterSource = parent?.characters.length ? parent.characters : project.characters
   const speakers = characterSource.length > 0 ? characterSource.map((c) => c.name).filter(Boolean) : null
+  const reviewByScene = new Map(project.review?.scenes.map((r) => [r.scene_id, r]) ?? [])
 
   return (
     <div>
@@ -280,6 +283,7 @@ export default function StudioPage() {
         onScript={() => (hasScenes ? setConfirmScript(true) : void startTask(() => generateScript(id)))}
         onAssets={() => void startTask(() => generateAssets(id, { scene_ids: null, kinds: null, force: false }))}
         onRender={() => void startTask(() => renderProject(id))}
+        onReview={() => void startTask(() => reviewProject(id))}
         onAll={() => void startTask(() => generateAll(id))}
       />
 
@@ -340,6 +344,7 @@ export default function StudioPage() {
                   contentMode={project.content_mode}
                   speakers={speakers}
                   motion={project.motion}
+                  review={reviewByScene.get(scene.id) ?? null}
                 />
               ))}
             </div>
@@ -357,6 +362,15 @@ export default function StudioPage() {
         {/* Right column */}
         <div className="space-y-4 self-start lg:sticky lg:top-20">
           <PreviewPanel project={project} />
+          {project.review && (
+            <ReviewPanel
+              project={project}
+              busy={busy}
+              actions={sceneActions}
+              onReview={() => void startTask(() => reviewProject(id))}
+              onProject={setProject}
+            />
+          )}
           {resources ? (
             <StudioSettings project={project} resources={resources} disabled={busy} onProject={setProject} />
           ) : resourcesError ? (

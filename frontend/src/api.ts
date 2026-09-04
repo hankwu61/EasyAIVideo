@@ -150,6 +150,10 @@ export const generateAll = (projectId: string) =>
 // ---------- Series: source documents ----------
 const proj = (id: string) => `/api/projects/${encodeURIComponent(id)}`
 
+// ---------- AI review ----------
+export const reviewProject = (projectId: string) => request<Task>(`${proj(projectId)}/review`, { method: 'POST' })
+export const clearReview = (projectId: string) => request<Project>(`${proj(projectId)}/review`, { method: 'DELETE' })
+
 export const uploadSource = (projectId: string, file: File) => {
   const form = new FormData()
   form.append('file', file, file.name)

@@ -1,6 +1,6 @@
 import type { MutableRefObject } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowLeft, Clapperboard, FileText, Images, Sparkles } from 'lucide-react'
+import { ArrowLeft, Clapperboard, FileText, Images, ScanEye, Sparkles } from 'lucide-react'
 import { useLang } from '../i18n'
 import type { Project } from '../types'
 import { Spinner, StatusBadge } from './ui'
@@ -15,6 +15,7 @@ interface StudioHeaderProps {
   onScript: () => void
   onAssets: () => void
   onRender: () => void
+  onReview: () => void
   onAll: () => void
 }
 
@@ -38,10 +39,12 @@ export default function StudioHeader({
   onScript,
   onAssets,
   onRender,
+  onReview,
   onAll,
 }: StudioHeaderProps) {
   const { t } = useLang()
   const hasScenes = project.scenes.length > 0
+  const hasVideo = !!project.final_video_url
   const isEpisode = project.kind === 'episode' && !!project.parent_id
 
   return (
@@ -85,6 +88,12 @@ export default function StudioHeader({
           <Clapperboard size={15} />
           {t('render')}
         </button>
+        <span title={hasVideo ? undefined : t('review_need_render')}>
+          <button type="button" className="btn-secondary" disabled={busy || !hasVideo} onClick={onReview}>
+            <ScanEye size={15} />
+            {t('review_button')}
+          </button>
+        </span>
         <button type="button" className="btn-primary" disabled={busy} onClick={onAll}>
           {busy ? <Spinner size={15} /> : <Sparkles size={15} />}
           {t('gen_all')}

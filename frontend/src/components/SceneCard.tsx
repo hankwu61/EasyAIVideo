@@ -1,7 +1,20 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, ChevronDown, ChevronUp, Clapperboard, Clock, Download, ImageOff, MapPin, Mic, RefreshCw, Upload } from 'lucide-react'
+import {
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Clapperboard,
+  Clock,
+  Download,
+  ImageOff,
+  MapPin,
+  Mic,
+  RefreshCw,
+  ScanEye,
+  Upload,
+} from 'lucide-react'
 import { useLang } from '../i18n'
-import type { AspectRatio, AssetKind, ContentMode, Scene, ScenePatch, UploadKind } from '../types'
+import type { AspectRatio, AssetKind, ContentMode, Scene, ScenePatch, SceneReview, UploadKind } from '../types'
 import { cx, formatSeconds } from '../utils'
 import LinesEditor from './LinesEditor'
 import { AI_VIDEO_MOTION } from './ProjectSettingsFields'
@@ -29,6 +42,8 @@ interface SceneCardProps {
   speakers?: string[] | null
   /** Project motion preset; 'ai_video' enables the video prompt / clip UI. */
   motion?: string
+  /** AI review result for this scene, when a review exists. */
+  review?: SceneReview | null
 }
 
 type TextField = 'narration' | 'image_prompt' | 'video_prompt'
@@ -60,6 +75,7 @@ export default function SceneCard({
   contentMode = 'narration',
   speakers = null,
   motion,
+  review = null,
 }: SceneCardProps) {
   const { t } = useLang()
   const drafts = {
@@ -139,6 +155,7 @@ export default function SceneCard({
 
   return (
     <div
+      id={`scene-${scene.id}`}
       className={cx(
         'card relative flex gap-4 p-4 transition',
         scene.status === 'failed' && 'border-danger/30',
@@ -271,6 +288,18 @@ export default function SceneCard({
             </span>
           )}
           {aiVideo && scene.video_stale && <StaleChip label={t('video_stale')} />}
+          {review && review.issues.length > 0 && (
+            <span
+              className={cx(
+                'chip',
+                review.score <= 2 ? 'border-danger/40 bg-danger/10 text-danger' : 'border-warning/40 bg-warning/10 text-warning',
+              )}
+              title={review.issues[0]}
+            >
+              <ScanEye size={10} />
+              {t('review_scene_chip', { n: review.issues.length })}
+            </span>
+          )}
           <span className="ml-auto flex items-center gap-1">
             <button
               type="button"

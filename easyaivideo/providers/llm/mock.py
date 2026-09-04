@@ -48,6 +48,14 @@ class MockLLM:
                 "characters": chars,
                 "locations": [{"name": "主要場景" if cjk else "Main location", "description": ""}],
             }
+        if prompt.startswith("TASK: REVIEW_SUMMARY"):
+            rows = [ln for ln in prompt.splitlines() if "|" in ln and ln.split("|")[0].strip().isdigit()]
+            low = [ln.split("|")[0].strip() for ln in rows if ln.split("|")[1].strip().isdigit() and int(ln.split("|")[1]) <= 2]
+            if cjk:
+                text = f"共 {len(rows)} 個場景。" + (f"場景 {', '.join(low)} 的畫面與旁白不符，建議先修正。" if low else "畫面與旁白大致相符。") + "（mock 摘要）"
+            else:
+                text = f"{len(rows)} scenes reviewed. " + (f"Scenes {', '.join(low)} do not match the narration; fix them first." if low else "Visuals match the narration.") + " (mock summary)"
+            return {"summary": text}
         if prompt.startswith("TASK: EPISODE_TITLES"):
             idx = [int(i) for i in re.findall(r"\[EPISODE (\d+)\]", prompt)]
             return {"episodes": [{"index": i, "title": (f"第 {i} 集" if cjk else f"Episode {i}"), "summary": ""} for i in idx]}
