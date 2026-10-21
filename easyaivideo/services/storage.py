@@ -36,7 +36,9 @@ def remove(rel: Optional[str]) -> None:
     if not rel:
         return
     try:
-        abs_path(rel).unlink(missing_ok=True)
+        path = abs_path(rel)
+        path.unlink(missing_ok=True)
+        path.with_suffix(path.suffix + ".source.json").unlink(missing_ok=True)
     except OSError:
         pass
 

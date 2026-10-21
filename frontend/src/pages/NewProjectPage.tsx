@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Info, LayoutTemplate, ScanSearch, Sparkles, Wand2 } from 'lucide-react'
-import { analyzeProject, createProject, errorMessage, listTemplates, uploadSource } from '../api'
+import { ArrowLeft, CheckCircle2, FileUp, Info, LayoutTemplate, Presentation, ScanSearch, Sparkles, Video, Wand2 } from 'lucide-react'
+import { analyzeProject, cloneVideoProject, createProject, createSlideProject, errorMessage, listTemplates, uploadSource } from '../api'
 import KindPicker, { DEFAULT_KINDS } from '../components/new/KindPicker'
 import SeriesContentCard, { DEFAULT_CONTENT_MODES, type SeriesContent } from '../components/new/SeriesContentCard'
 import VisualCard, { type VisualSettings } from '../components/new/VisualCard'
@@ -14,6 +14,12 @@ import { useLang } from '../i18n'
 import type { AspectRatio, InputMode, ProjectCreate, ProjectKind, Template } from '../types'
 import { cx } from '../utils'
 
+interface SlideContent {
+  pptx_file: File | null
+  guide_file: File | null
+  guide_text: string
+}
+
 interface FormState {
   kind: ProjectKind
   input_mode: InputMode
@@ -23,6 +29,8 @@ interface FormState {
   n_scenes: number
   visual: VisualSettings
   series: SeriesContent
+  slide: SlideContent
+  video_file: File | null
   output: OutputSettings
   template_id?: string | null
 }
@@ -74,6 +82,12 @@ export default function NewProjectPage() {
         content_mode: 'narration',
         episode_target_seconds: 120,
       },
+      slide: {
+        pptx_file: null,
+        guide_file: null,
+        guide_text: '',
+      },
+      video_file: null,
       output: {
         voice: zhVoice?.id ?? '',
         tts_speed: 1.0,
@@ -143,7 +157,7 @@ export default function NewProjectPage() {
       aspect_ratio: form.visual.aspect_ratio,
       style_id: form.visual.style_id,
       style_prompt: form.visual.style_prompt.trim() ? form.visual.style_prompt : null,
-      n_scenes: form.n_scenes,
+      n_scenes: form.input_mode === 'prompt' ? 1 : form.n_scenes,
       ...form.output,
       template_id: form.template_id ?? undefined,
       auto_start: autoStart,
@@ -196,11 +210,74 @@ export default function NewProjectPage() {
     navigate(`/series/${project.id}`)
   }
 
+  const submitSlide = async (form: FormState, autoStart: boolean) => {
+    if (!form.slide.pptx_file) {
+      setSubmitError(t('pptx_required'))
+      return
+    }
+    setSubmitting(autoStart ? 'start' : 'create')
+    const fd = new FormData()
+    fd.append('pptx_file', form.slide.pptx_file, form.slide.pptx_file.name)
+    if (form.slide.guide_file) {
+      fd.append('guide_file', form.slide.guide_file, form.slide.guide_file.name)
+    }
+    if (form.slide.guide_text.trim()) {
+      fd.append('guide_text', form.slide.guide_text.trim())
+    }
+    if (form.title.trim()) {
+      fd.append('title', form.title.trim())
+    }
+    fd.append('language', form.language)
+    fd.append('aspect_ratio', form.visual.aspect_ratio)
+    fd.append('voice', form.output.voice)
+    fd.append('tts_speed', String(form.output.tts_speed))
+    if (form.output.bgm) fd.append('bgm', form.output.bgm)
+    fd.append('bgm_volume', String(form.output.bgm_volume))
+    fd.append('subtitle_enabled', String(form.output.subtitle_enabled))
+    if (form.output.subtitle_position) fd.append('subtitle_position', form.output.subtitle_position)
+    if (form.output.font_family) fd.append('font_family', form.output.font_family)
+    if (form.output.font_size) fd.append('font_size', String(form.output.font_size))
+    fd.append('show_title', String(form.output.show_title))
+    if (form.output.transition) fd.append('transition', form.output.transition)
+    if (form.output.transition_duration) fd.append('transition_duration', String(form.output.transition_duration))
+    fd.append('motion', form.output.motion)
+    if (form.template_id) fd.append('template_id', form.template_id)
+    fd.append('auto_start', String(autoStart))
+
+    const project = await createSlideProject(fd)
+    toast.success(t('project_created'))
+    navigate(`/projects/${project.id}`)
+  }
+
+  const submitVideo = async (form: FormState, autoStart: boolean) => {
+    if (!form.video_file) {
+      setSubmitError(t('clone_video_file_required'))
+      return
+    }
+    setSubmitting(autoStart ? 'start' : 'create')
+    const fd = new FormData()
+    fd.append('video_file', form.video_file, form.video_file.name)
+    if (form.title.trim()) fd.append('title', form.title.trim())
+    fd.append('language', form.language)
+    if (form.visual.style_id) fd.append('style_id', form.visual.style_id)
+    if (form.output.motion) fd.append('motion', form.output.motion)
+    if (form.output.voice) fd.append('voice', form.output.voice)
+    fd.append('auto_start', String(autoStart))
+    fd.append('generation_mode', 'minimax_h3')
+    fd.append('h3_mode', 'ref2va')
+
+    const project = await cloneVideoProject(fd)
+    toast.success(t('clone_video_success'))
+    navigate(`/projects/${project.id}`)
+  }
+
   const submit = async (autoStart: boolean) => {
     if (!form) return
     setSubmitError(null)
     try {
       if (form.kind === 'series') await submitSeries(form, autoStart)
+      else if (form.input_mode === 'slide') await submitSlide(form, autoStart)
+      else if (form.input_mode === 'video') await submitVideo(form, autoStart)
       else await submitSingle(form, autoStart)
     } catch (e) {
       setSubmitError(errorMessage(e))
@@ -245,8 +322,10 @@ export default function NewProjectPage() {
 
   const { presets, styles, voices, bgm } = resources
   const isSeries = form.kind === 'series'
+  const isPrompt = form.input_mode === 'prompt'
   const isTopic = form.input_mode === 'topic'
-  const startLabel = isSeries ? t('create_and_analyze') : t('create_and_start')
+  const isVideo = form.input_mode === 'video'
+  const startLabel = isSeries ? t('create_and_analyze') : isVideo ? t('clone_video_submit_btn') : t('create_and_start')
   const busy = submitting !== null
 
   return (
@@ -310,7 +389,7 @@ export default function NewProjectPage() {
             <SectionCard title={t('section_content')}>
               <div className="space-y-4">
                 <Field label={t('input_mode')}>
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
                     {presets.input_modes.map((m) => {
                       const active = m.id === form.input_mode
                       return (
@@ -328,7 +407,24 @@ export default function NewProjectPage() {
                             name="input_mode"
                             value={m.id}
                             checked={active}
-                            onChange={() => update({ input_mode: m.id as InputMode })}
+                            onChange={() => {
+                              const isSlideMode = m.id === 'slide'
+                              const isPromptMode = m.id === 'prompt'
+                              const isVideoMode = m.id === 'video'
+                              update({
+                                input_mode: m.id as InputMode,
+                                n_scenes: isPromptMode ? 1 : form.n_scenes <= 1 ? 6 : form.n_scenes,
+                                visual: {
+                                  ...form.visual,
+                                  aspect_ratio: isSlideMode ? '16:9' : form.visual.aspect_ratio,
+                                },
+                                output: {
+                                  ...form.output,
+                                  motion: isSlideMode ? 'static' : isPromptMode || isVideoMode ? 'ai_video' : form.output.motion,
+                                  show_title: isSlideMode ? false : form.output.show_title,
+                                },
+                              })
+                            }}
                             className="accent-accent"
                           />
                           {m.label}
@@ -338,48 +434,245 @@ export default function NewProjectPage() {
                   </div>
                 </Field>
 
-                <Field label={isTopic ? t('topic_label') : t('script_label')}>
-                  <textarea
-                    className="input min-h-40"
-                    rows={isTopic ? 5 : 10}
-                    placeholder={isTopic ? t('topic_placeholder') : t('script_placeholder')}
-                    value={form.topic}
-                    onChange={(e) => update({ topic: e.target.value })}
-                    required
-                  />
-                </Field>
+                {form.input_mode === 'slide' ? (
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-accent/20 bg-accent/5 p-3.5 text-xs text-text leading-relaxed">
+                      {t('slide_info_callout')}
+                    </div>
 
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <Field label={`${t('title_label')} · ${t('optional')}`}>
-                    <input
-                      className="input"
-                      placeholder={t('title_placeholder')}
-                      value={form.title}
-                      onChange={(e) => update({ title: e.target.value })}
-                    />
-                  </Field>
-                  <Field label={t('language')}>
-                    <select className="input" value={form.language} onChange={(e) => update({ language: e.target.value })}>
-                      {presets.languages.map((l) => (
-                        <option key={l.id} value={l.id}>
-                          {l.label}
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
-                </div>
+                    {/* PPTX File Upload */}
+                    <Field label={t('slide_upload_label')}>
+                      <div
+                        className={cx(
+                          'relative flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-6 transition-all',
+                          form.slide.pptx_file
+                            ? 'border-accent bg-accent/5'
+                            : 'border-border hover:border-accent/50 hover:bg-bg-elev/50 cursor-pointer',
+                        )}
+                      >
+                        <input
+                          type="file"
+                          accept=".pptx"
+                          className="absolute inset-0 cursor-pointer opacity-0"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0] ?? null
+                            if (file) {
+                              const guessedTitle = file.name.replace(/\.[^/.]+$/, '')
+                              update({
+                                title: form.title || guessedTitle,
+                                slide: { ...form.slide, pptx_file: file },
+                              })
+                            }
+                          }}
+                        />
+                        <div className="flex flex-col items-center text-center">
+                          <div className="grid h-12 w-12 place-items-center rounded-2xl bg-accent/15 text-accent mb-2">
+                            <Presentation size={24} />
+                          </div>
+                          {form.slide.pptx_file ? (
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-1.5 font-medium text-accent">
+                                <CheckCircle2 size={16} />
+                                <span>{form.slide.pptx_file.name}</span>
+                              </div>
+                              <p className="text-xs text-muted">
+                                {(form.slide.pptx_file.size / (1024 * 1024)).toFixed(2)} MB · 點擊可更換檔案
+                              </p>
+                            </div>
+                          ) : (
+                            <div className="space-y-1">
+                              <p className="text-sm font-medium">{t('slide_upload_hint')}</p>
+                              <p className="text-xs text-muted">支援 Office PowerPoint .pptx 格式</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </Field>
 
-                {isTopic && (
-                  <Field label={t('n_scenes')} right={String(form.n_scenes)}>
-                    <input
-                      type="range"
-                      min={3}
-                      max={15}
-                      step={1}
-                      value={form.n_scenes}
-                      onChange={(e) => update({ n_scenes: Number(e.target.value) })}
-                    />
-                  </Field>
+                    {/* Companion Speaker Guide */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-medium text-muted">{t('slide_guide_label')}</label>
+                        <label className="btn-ghost btn-xs cursor-pointer flex items-center gap-1 text-accent">
+                          <FileUp size={12} />
+                          <span>{form.slide.guide_file ? form.slide.guide_file.name : t('slide_guide_file_btn')}</span>
+                          <input
+                            type="file"
+                            accept=".md,.txt,.markdown"
+                            className="hidden"
+                            onChange={(e) => {
+                              const f = e.target.files?.[0] ?? null
+                              if (f) {
+                                update({ slide: { ...form.slide, guide_file: f } })
+                              }
+                            }}
+                          />
+                        </label>
+                      </div>
+                      <textarea
+                        className="input min-h-24 text-sm"
+                        rows={4}
+                        placeholder={t('slide_guide_placeholder')}
+                        value={form.slide.guide_text}
+                        onChange={(e) => update({ slide: { ...form.slide, guide_text: e.target.value } })}
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      <Field label={`${t('title_label')} · ${t('optional')}`}>
+                        <input
+                          className="input"
+                          placeholder={t('title_placeholder')}
+                          value={form.title}
+                          onChange={(e) => update({ title: e.target.value })}
+                        />
+                      </Field>
+                      <Field label={t('language')}>
+                        <select className="input" value={form.language} onChange={(e) => update({ language: e.target.value })}>
+                          {presets.languages.map((l) => (
+                            <option key={l.id} value={l.id}>
+                              {l.label}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
+                    </div>
+                  </div>
+                ) : form.input_mode === 'video' ? (
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-purple-500/20 bg-purple-500/5 p-3.5 text-xs text-text leading-relaxed">
+                      {t('clone_video_subtitle')}
+                    </div>
+
+                    {/* Video File Upload */}
+                    <Field label={t('clone_video_upload_label')}>
+                      <div
+                        className={cx(
+                          'relative flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-6 transition-all',
+                          form.video_file
+                            ? 'border-purple-500 bg-purple-500/5'
+                            : 'border-border hover:border-purple-500/50 hover:bg-bg-elev/50 cursor-pointer',
+                        )}
+                      >
+                        <input
+                          type="file"
+                          accept="video/*,.mp4,.mov,.webm,.mkv"
+                          className="absolute inset-0 cursor-pointer opacity-0"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0] ?? null
+                            if (file) {
+                              const guessedTitle = file.name.replace(/\.[^/.]+$/, '')
+                              update({
+                                title: form.title || guessedTitle,
+                                video_file: file,
+                              })
+                            }
+                          }}
+                        />
+                        <div className="flex flex-col items-center text-center">
+                          <div className="grid h-12 w-12 place-items-center rounded-2xl bg-purple-500/15 text-purple-400 mb-2">
+                            <Video size={24} />
+                          </div>
+                          {form.video_file ? (
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-1.5 font-medium text-purple-400">
+                                <CheckCircle2 size={16} />
+                                <span>{form.video_file.name}</span>
+                              </div>
+                              <p className="text-xs text-muted">
+                                {(form.video_file.size / (1024 * 1024)).toFixed(2)} MB · 點擊可更換影片檔案
+                              </p>
+                            </div>
+                          ) : (
+                            <div className="space-y-1">
+                              <p className="text-sm font-medium">{t('clone_video_upload_hint')}</p>
+                              <p className="text-xs text-muted">AI 將抽取關鍵畫面鏡頭、分析主題與視覺風格並建立分鏡</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </Field>
+
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      <Field label={`${t('title_label')} · ${t('optional')}`}>
+                        <input
+                          className="input"
+                          placeholder={t('title_placeholder')}
+                          value={form.title}
+                          onChange={(e) => update({ title: e.target.value })}
+                        />
+                      </Field>
+                      <Field label={t('language')}>
+                        <select className="input" value={form.language} onChange={(e) => update({ language: e.target.value })}>
+                          {presets.languages.map((l) => (
+                            <option key={l.id} value={l.id}>
+                              {l.label}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <Field
+                      label={
+                        isPrompt
+                          ? t('prompt_label')
+                          : isTopic
+                            ? t('topic_label')
+                            : t('script_label')
+                      }
+                    >
+                      <textarea
+                        className="input min-h-40"
+                        rows={isPrompt ? 4 : isTopic ? 5 : 10}
+                        placeholder={
+                          isPrompt
+                            ? t('prompt_placeholder')
+                            : isTopic
+                              ? t('topic_placeholder')
+                              : t('script_placeholder')
+                        }
+                        value={form.topic}
+                        onChange={(e) => update({ topic: e.target.value })}
+                        required
+                      />
+                    </Field>
+
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      <Field label={`${t('title_label')} · ${t('optional')}`}>
+                        <input
+                          className="input"
+                          placeholder={t('title_placeholder')}
+                          value={form.title}
+                          onChange={(e) => update({ title: e.target.value })}
+                        />
+                      </Field>
+                      <Field label={t('language')}>
+                        <select className="input" value={form.language} onChange={(e) => update({ language: e.target.value })}>
+                          {presets.languages.map((l) => (
+                            <option key={l.id} value={l.id}>
+                              {l.label}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
+                    </div>
+
+                    {isTopic && (
+                      <Field label={t('n_scenes')} right={String(form.n_scenes)}>
+                        <input
+                          type="range"
+                          min={3}
+                          max={15}
+                          step={1}
+                          value={form.n_scenes}
+                          onChange={(e) => update({ n_scenes: Number(e.target.value) })}
+                        />
+                      </Field>
+                    )}
+                  </>
                 )}
               </div>
             </SectionCard>

@@ -34,6 +34,11 @@ class VideoRequest:
     end_image: Optional[Path] = None  # first+last frame mode
     reference_images: list[Path] = field(default_factory=list)
     seed: Optional[int] = None
+    # MiniMax H3 reference-to-video inputs (other providers ignore these)
+    reference_videos: list[Path] = field(default_factory=list)
+    reference_audios: list[Path] = field(default_factory=list)
+    h3_mode: Optional[str] = None  # "ref2va" | "t2va" | "i2va" | "fl2va" | "l2va"; None = infer from inputs
+    ratio: Optional[str] = None  # "9:16" / "16:9" / "1:1" ... ; None = provider default
 
 
 class LLMProvider(Protocol):

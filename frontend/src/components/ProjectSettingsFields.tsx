@@ -36,7 +36,7 @@ export interface OutputSettings {
 export const DEFAULT_VIDEO_MODES: IdLabel[] = [
   { id: 'i2v', label: '圖生影片（場景圖為首幀）' },
   { id: 't2v', label: '文生影片（只用提示詞）' },
-  { id: 'keyframes', label: '首尾幀（下一場景圖為尾幀）' },
+  { id: 'keyframes', label: '首尾幀（同一分鏡的首尾圖）' },
 ]
 
 /** The motion preset id that switches a project to AI video clips. */

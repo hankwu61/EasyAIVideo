@@ -32,8 +32,17 @@ class LLMConfig(BaseModel):
     temperature: float = Field(0.8, ge=0.0, le=2.0)
 
 
+class FishAudioConfig(BaseModel):
+    api_key: str = ""
+    base_url: str = "https://api.fish.audio/v1"
+    model: str = "s2.1-pro"
+    female_reference_id: str = ""
+    male_reference_id: str = ""
+
+
 class TTSConfig(BaseModel):
-    provider: Literal["edge", "openai_compat", "silent"] = "edge"
+    provider: Literal["edge", "fish_audio", "openai_compat", "silent"] = "edge"
+    fish_audio: FishAudioConfig = Field(default_factory=FishAudioConfig)
     voice: str = "zh-TW-HsiaoChenNeural"
     speed: float = Field(1.0, ge=0.5, le=2.0)
     api_key: str = ""
@@ -63,8 +72,8 @@ class ImageConfig(BaseModel):
 
 class VideoConfig(BaseModel):
     # kenburns = ffmpeg animation of stills; comfyui = local image-to-video workflow;
-    # agnes = Agnes AI async /v1/videos (text-to-video, image-to-video, first+last frame)
-    provider: Literal["kenburns", "comfyui", "agnes"] = "kenburns"
+    # agnes = Agnes AI async /v1/videos; minimax = MiniMax Hailuo H3 video generation
+    provider: Literal["kenburns", "comfyui", "agnes", "minimax"] = "kenburns"
     api_key: str = ""
     base_url: str = "https://apihub.agnes-ai.com/v1"
     model: str = "agnes-video-v2.0"
@@ -76,6 +85,8 @@ class VideoConfig(BaseModel):
     comfyui_url: str = "http://127.0.0.1:8188"
     comfyui_workflow: str = "video_default.json"
     fps: int = Field(30, ge=15, le=60)
+    # MiniMax H3 output resolution (H3: 768P / 2K, H3-Max: 480P / 768P)
+    minimax_resolution: Literal["480P", "768P", "2K"] = "768P"
 
 
 class RenderConfig(BaseModel):
@@ -235,6 +246,13 @@ class ConfigManager:
             out.append("TTS provider is 'silent': videos will have no voice-over.")
         if cfg.video.provider == "agnes" and not cfg.video.api_key:
             out.append("Video provider is 'agnes' but video.api_key is empty.")
+        if cfg.video.provider == "minimax":
+            if not cfg.video.api_key:
+                out.append("Video provider is 'minimax' but video.api_key is empty.")
+            elif cfg.video.api_key.strip().lower().startswith(("http://", "https://")):
+                out.append("Video provider is 'minimax' but video.api_key looks like a URL, not an API key.")
+            if "minimax" not in (cfg.video.base_url or "").lower():
+                out.append("Video provider is 'minimax' but video.base_url is not a MiniMax URL; https://api.minimax.io will be used.")
         return out
 
 

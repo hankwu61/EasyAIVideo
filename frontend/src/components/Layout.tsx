@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
-import { Clapperboard, Languages, Settings2 } from 'lucide-react'
+import { Clapperboard, Copy, Languages, Settings2, Sparkles } from 'lucide-react'
 import { getHealth } from '../api'
+import SingleVideoModal from './SingleVideoModal'
+import CloneVideoModal from './CloneVideoModal'
 import { useLang } from '../i18n'
 import { cx } from '../utils'
 
@@ -34,6 +36,8 @@ function useHealthDot(): HealthState {
 export default function Layout() {
   const { t, lang, toggle } = useLang()
   const health = useHealthDot()
+  const [quickVideoOpen, setQuickVideoOpen] = useState(false)
+  const [cloneModalOpen, setCloneModalOpen] = useState(false)
 
   const navClass = ({ isActive }: { isActive: boolean }) =>
     cx(
@@ -65,6 +69,26 @@ export default function Layout() {
           </nav>
 
           <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setCloneModalOpen(true)}
+              className="btn-secondary btn-sm flex items-center gap-1.5 border-purple-500/40 bg-purple-500/10 text-purple-300 hover:bg-purple-500/20 hover:text-purple-200 transition-all"
+              title={t('clone_video')}
+            >
+              <Copy size={14} className="text-purple-400" />
+              <span className="hidden sm:inline font-medium">{t('clone_video')}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setQuickVideoOpen(true)}
+              className="btn-secondary btn-sm flex items-center gap-1.5 border-accent/40 bg-accent/10 text-accent hover:bg-accent/20 hover:text-accent-hover transition-all"
+              title={t('single_video')}
+            >
+              <Sparkles size={14} className="text-accent animate-pulse" />
+              <span className="hidden sm:inline font-medium">{t('single_video')}</span>
+            </button>
+
             <div
               className="flex items-center gap-2 rounded-lg border border-border bg-panel px-2.5 py-1.5 text-xs text-muted"
               title={health === 'ok' ? t('health_ok') : health === 'bad' ? t('health_bad') : t('health_checking')}
@@ -98,6 +122,9 @@ export default function Layout() {
       <main className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-6 sm:px-6">
         <Outlet />
       </main>
+
+      <SingleVideoModal isOpen={quickVideoOpen} onClose={() => setQuickVideoOpen(false)} />
+      <CloneVideoModal isOpen={cloneModalOpen} onClose={() => setCloneModalOpen(false)} />
     </div>
   )
 }

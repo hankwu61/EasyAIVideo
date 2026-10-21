@@ -33,7 +33,7 @@ MOTIONS = [
 VIDEO_MODES = [
     {"id": "i2v", "label": "圖生影片（場景圖為首幀）"},
     {"id": "t2v", "label": "文生影片（只用提示詞）"},
-    {"id": "keyframes", "label": "首尾幀（下一場景圖為尾幀）"},
+    {"id": "keyframes", "label": "首尾幀（同一分鏡的首尾圖）"},
 ]
 
 CONTENT_MODES = [
@@ -49,6 +49,9 @@ KINDS = [
 INPUT_MODES = [
     {"id": "topic", "label": "輸入主題，AI 撰寫腳本"},
     {"id": "script", "label": "使用我的文稿（自動分段）"},
+    {"id": "prompt", "label": "單一提示詞生成單一影片"},
+    {"id": "video", "label": "匯入短影片分析復刻（同主題同場景）"},
+    {"id": "slide", "label": "簡報轉影片（PPTX 投影片 + 講稿）"},
 ]
 
 LLM_PRESETS = [

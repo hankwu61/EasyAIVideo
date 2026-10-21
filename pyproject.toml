@@ -17,6 +17,11 @@ dependencies = [
     "aiosqlite>=0.20.0",
     "python-multipart>=0.0.12",
     "pypdf>=5.0.0",
+    "python-pptx>=1.0.2",
+    "pywin32>=312",
+    "numpy>=1.26.0",
+    "scipy>=1.11.0",
+    "yt-dlp>=2025.1.0",
 ]
 
 [project.scripts]

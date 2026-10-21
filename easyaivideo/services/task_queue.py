@@ -119,6 +119,11 @@ class TaskQueue:
                 from .review import ReviewService
 
                 result = await ReviewService(self.db).run(project, progress)
+            elif task.type == "h3_generate":
+                idx = payload.get("segment_indexes")
+                result = await self.pipeline.generate_h3(
+                    project, progress, segment_indexes=[int(i) for i in idx] if idx else None, force=bool(payload.get("force"))
+                )
             elif task.type == "publish":
                 result = await PublisherService(self.db).publish(project, progress, payload)
             else:
@@ -144,7 +149,7 @@ class TaskQueue:
             else:
                 task.status, task.progress, task.result = "succeeded", 1.0, inner.result()
                 task.message = task.message or "完成"
-                if task.type in ("render", "full"):
+                if task.type in ("render", "full", "h3_generate"):
                     asyncio.create_task(self._check_auto_publish(project.id))
         finally:
             task.finished_at = now_iso()

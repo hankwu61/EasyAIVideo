@@ -6,16 +6,25 @@ import asyncio
 import re
 import secrets
 from pathlib import Path
-from typing import Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 from ..config import AppConfig, config_manager
 from ..db import Database
 from ..models import AssetKind, Character, Episode, Line, Location, Overview, Project, Scene
 from ..presets import style_prompt
-from ..prompts import analyze_document_prompt, episode_script_prompt, episode_titles_prompt, image_prompts_prompt, topic_script_prompt
+from ..prompts import (
+    analyze_document_prompt,
+    end_image_prompt_for,
+    episode_script_prompt,
+    episode_titles_prompt,
+    image_prompts_prompt,
+    is_cjk,
+    topic_script_prompt,
+    video_motion_rules,
+)
 from ..providers.base import ProviderError, VideoRequest
 from ..providers.registry import get_image, get_llm, get_tts, get_video
-from . import ffmpeg, series, storage
+from . import ffmpeg, series, slide_service, storage, storyboard
 from .overlay import render_overlay
 from .text_split import split_script
 
@@ -23,7 +32,7 @@ Progress = Callable[[float, str], Awaitable[None]]
 SCENE_TAIL_SECONDS = 0.35
 LINE_GAP_SECONDS = 0.3
 IMAGE_CONCURRENCY = 3
-DEFAULT_MOTION_HINT = "slow cinematic camera movement, subtle natural motion, consistent characters and lighting"
+DEFAULT_MOTION_HINT = "The camera stays fixed. Gentle ambient movement unfolds naturally within the frame."
 
 _SPEAKABLE = re.compile(r"[A-Za-z0-9぀-ヿ㐀-鿿가-힯]")
 
@@ -37,7 +46,12 @@ def speakable(text: str) -> bool:
 
 
 def _required_kinds(project: Project) -> list[AssetKind]:
-    kinds: list[AssetKind] = ["audio", "image"]
+    kinds: list[AssetKind] = []
+    if project.h3_segments:  # MiniMax H3 clone: each scene = one H3 part (reference frame + generated clip)
+        return ["image", "video"]
+    if project.input_mode != "prompt" or project.subtitle_enabled:
+        kinds.append("audio")
+    kinds.append("image")
     if project.motion == "ai_video":
         kinds.append("video")
     return kinds
@@ -84,9 +98,62 @@ def _ensure_appearance(image_prompt: str, mentioned: list[Character]) -> str:
     return image_prompt + (", " + ", ".join(extra) if extra else "")
 
 
-def video_prompt_for(scene: Scene, style: str) -> str:
-    base = scene.video_prompt.strip() or f"{DEFAULT_MOTION_HINT}. {scene.image_prompt.strip()}"
-    return f"{base}, {style}".strip(", ") if style and style.lower() not in base.lower() else base
+def image_prompt_for(
+    scene: Scene,
+    style: str,
+    prev_scene: Optional[Scene] = None,
+    first_scene: Optional[Scene] = None,
+    prompt_prefix: str = "",
+) -> str:
+    """Build the full image generation prompt, ensuring continuity with the previous scene and original first frame."""
+    parts: list[str] = []
+    if prompt_prefix.strip():
+        parts.append(prompt_prefix.strip())
+
+    base = scene.image_prompt.strip()
+    # If not the first scene, reinforce character and environment continuity with the previous scene / master keyframe
+    if scene.index > 0 and (prev_scene or first_scene):
+        if not any(k in base.lower() for k in ("continuity", "consistent", "same character", "same person", "same face")):
+            base = f"{base}, strict visual continuity with preceding scene, identical character facial features, same hairstyle, exact same outfit and clothing colors, matching environment lighting and atmosphere"
+
+    parts.append(base)
+    if style.strip() and style.strip().lower() not in base.lower():
+        parts.append(style.strip())
+
+    return ", ".join(parts)
+
+
+def video_prompt_for(scene: Scene, style: str, prev_scene: Optional[Scene] = None, *, video_mode: str = "i2v") -> str:
+    # Preserve authored motion instructions; image appearance/style belong to input frames.
+    base = scene.video_prompt.strip()
+    if video_mode == "t2v":
+        base = base or f"{scene.image_prompt.strip()}. {DEFAULT_MOTION_HINT}"
+        return f"{base}, {style}" if style and style.lower() not in base.lower() else base
+    if base:
+        return base
+    if video_mode == "keyframes":
+        return ("The camera stays fixed. The subject begins the movement implied by the starting pose, "
+                "then progresses naturally toward the final pose, finally settling into the positions shown in the ending frame.")
+    return DEFAULT_MOTION_HINT
+
+
+def video_frames_for(scene: Scene, mode: str) -> tuple[Optional[Path], Optional[Path]]:
+    """Only pair frames belonging to this shot; never borrow another scene's frame."""
+    if mode not in ("i2v", "keyframes"):
+        return None, None
+    start = storage.abs_path(scene.image_path) if scene.image_path else None
+    if start is None or not start.is_file():
+        raise ProviderError("此分鏡缺少首幀圖，請先產生或上傳此分鏡的首幀圖。")
+    if scene.image_stale:
+        raise ProviderError("此分鏡首幀圖已過期，請先重新產生首幀圖。")
+    if mode == "i2v":
+        return start, None
+    end = storage.abs_path(scene.end_image_path) if scene.end_image_path else None
+    if end is None or not end.is_file():
+        raise ProviderError("首尾幀模式需要同一分鏡的尾幀圖，請先產生或上傳尾幀圖，或改用單首幀圖生影片。")
+    if scene.end_image_stale:
+        raise ProviderError("此分鏡尾幀圖已過期，請先重新產生尾幀圖。")
+    return start, end
 
 
 class Pipeline:
@@ -100,7 +167,7 @@ class Pipeline:
 
     def _reset_scenes(self, project: Project) -> None:
         for scene in project.scenes:
-            for rel in (scene.audio_path, scene.image_path, scene.video_path, scene.segment_path):
+            for rel in (scene.audio_path, scene.image_path, scene.end_image_path, scene.video_path, scene.segment_path):
                 storage.remove(rel)
         project.scenes = []
         project.scene_counter = 0
@@ -112,32 +179,77 @@ class Pipeline:
     async def generate_script(self, project: Project, progress: Progress) -> Project:
         if project.input_mode == "novel":
             return await self._generate_episode_script(project, progress)
+        if project.input_mode == "slide":
+            return await self._process_slide_script(project, progress)
         cfg = config_manager.get()
         llm = get_llm(cfg)
         style = project.style_prompt or style_prompt(project.style_id)
         await progress(0.05, "正在撰寫腳本…")
 
-        if project.input_mode == "script":
+        if project.input_mode == "prompt":
+            prompt_text = project.topic.strip()
+            if not prompt_text:
+                raise PipelineError("提示詞是空的，請先輸入提示詞。")
+            await progress(0.05, "正在處理單一提示詞…")
+
+            english_prompt = prompt_text
+            # If prompt has CJK characters, use LLM to translate/refine into vivid English for visual & video models
+            if is_cjk(project.language) or any(ord(c) > 127 for c in prompt_text):
+                try:
+                    refine_query = (
+                        f"Translate and refine the following video description into a vivid, high-quality visual prompt in English "
+                        f"(30-50 words, specifying subject, motion, lighting, atmosphere, no text or logos):\n\n"
+                        f"{prompt_text}\n\n"
+                        f"Return ONLY the refined English prompt, nothing else."
+                    )
+                    translated = await llm.complete(refine_query)
+                    if translated and translated.strip():
+                        english_prompt = translated.strip().strip('"').strip("'")
+                except Exception:
+                    pass
+
+            motion_prompt = english_prompt
+            if (project.video_mode or cfg.video.mode) != "t2v":
+                motion_prompt = ""
+                try:
+                    motion_prompt = (await llm.complete(
+                        video_motion_rules(project.video_mode or cfg.video.mode)
+                        + "\nUse the following description as context, not text to repeat. "
+                        + "Return ONLY the video motion prompt.\n" + english_prompt
+                    )).strip()
+                except Exception:
+                    pass  # Empty prompts use the mode-specific motion fallback.
+
+            title = project.title.strip() or prompt_text[:20]
+            data = {"title": title}
+        elif project.input_mode == "script":
             segments = split_script(project.topic, project.language)
             if not segments:
                 raise PipelineError("文稿內容是空的，請先輸入文字。")
-            data = await llm.complete_json(image_prompts_prompt(segments, project.language, style))
+            data = await llm.complete_json(image_prompts_prompt(segments, project.language, style, project.video_mode or cfg.video.mode))
             prompts = [str(p) for p in data.get("image_prompts", [])]
+            end_prompts = [str(p) for p in data.get("end_image_prompts", [])]
             videos = [str(p) for p in data.get("video_prompts", [])]
             if len(prompts) < len(segments):
                 prompts += [segments[i][:100] for i in range(len(prompts), len(segments))]
             scenes_data = [
-                {"narration": s, "image_prompt": prompts[i], "video_prompt": videos[i] if i < len(videos) else ""}
+                {
+                    "narration": s,
+                    "image_prompt": prompts[i],
+                    "end_image_prompt": end_prompts[i] if i < len(end_prompts) else "",
+                    "video_prompt": videos[i] if i < len(videos) else "",
+                }
                 for i, s in enumerate(segments)
             ]
         else:
             if not project.topic.strip():
                 raise PipelineError("請先輸入主題。")
-            data = await llm.complete_json(topic_script_prompt(project.topic, project.n_scenes, project.language, style))
+            data = await llm.complete_json(topic_script_prompt(project.topic, project.n_scenes, project.language, style, project.video_mode or cfg.video.mode))
             scenes_data = [
                 {
                     "narration": str(s.get("narration", "")).strip(),
                     "image_prompt": str(s.get("image_prompt", "")).strip(),
+                    "end_image_prompt": str(s.get("end_image_prompt", "") or "").strip(),
                     "video_prompt": str(s.get("video_prompt", "") or "").strip(),
                 }
                 for s in data.get("scenes", [])
@@ -150,13 +262,68 @@ class Pipeline:
         if title and (not project.title or project.title == project.topic[:30]):
             project.title = title[:40]
 
-        self._reset_scenes(project)
-        for item in scenes_data:
-            project.scenes.append(Scene(id=project.next_scene_id(), **item))
+        if project.input_mode == "prompt":
+            full_img_prompt = f"{english_prompt}, {style}".strip(", ") if style else english_prompt
+            narration_text = prompt_text if project.subtitle_enabled else ""
+            if project.scenes:
+                scene = project.scenes[0]
+                scene.image_prompt = full_img_prompt
+                scene.video_prompt = motion_prompt
+                scene.narration = narration_text
+            else:
+                scene = Scene(
+                    id=project.next_scene_id(),
+                    index=0,
+                    duration=5.0,
+                    narration=narration_text,
+                    image_prompt=full_img_prompt,
+                    video_prompt=motion_prompt,
+                )
+                project.scenes = [scene]
+        else:
+            self._reset_scenes(project)
+            for item in scenes_data:
+                project.scenes.append(Scene(id=project.next_scene_id(), **item))
+        if project.characters:
+            for s in project.scenes:
+                s.image_prompt = _ensure_appearance(s.image_prompt, _mentioned_characters(s, project.characters))
         project.reindex()
         refresh_project_status(project)
         await self.db.save_project(project)
         await progress(1.0, f"腳本完成，共 {len(project.scenes)} 個場景")
+        return project
+
+    async def _process_slide_script(self, project: Project, progress: Progress) -> Project:
+        if not project.scenes:
+            raise PipelineError("專案尚未匯入簡報投影片，請先上傳 PPTX 簡報檔。")
+        missing = [s for s in project.scenes if not s.narration.strip()]
+        if not missing:
+            await progress(1.0, f"投影片講稿齊全，共 {len(project.scenes)} 頁")
+            refresh_project_status(project)
+            await self.db.save_project(project)
+            return project
+
+        cfg = config_manager.get()
+        llm = get_llm(cfg)
+        await progress(0.1, f"正在為 {len(missing)} 頁投影片生成演講講稿…")
+        for idx, scene in enumerate(missing, 1):
+            prompt = (
+                f"請為一場專業簡報的第 {scene.index + 1} 頁投影片撰寫口語化的演講講稿（繁體中文）。\n"
+                f"投影片資訊：{scene.image_prompt}\n"
+                f"要求：\n"
+                f"1. 語氣生動自然、適合演講口語朗讀，不要包含 Markdown 語法、星號、表情符號或代碼塊。\n"
+                f"2. 篇幅約 80~150 字，直接輸出講稿內容即可。"
+            )
+            try:
+                res = await llm.complete(prompt)
+                scene.narration = slide_service.clean_speech_text(res.strip())
+            except Exception as exc:
+                scene.narration = f"第 {scene.index + 1} 頁投影片說明。"
+            await progress(0.1 + 0.85 * idx / len(missing), f"已完成 {idx}/{len(missing)} 頁講稿")
+
+        refresh_project_status(project)
+        await self.db.save_project(project)
+        await progress(1.0, f"簡報講稿已備妥，共 {len(project.scenes)} 頁")
         return project
 
     async def _generate_episode_script(self, project: Project, progress: Progress) -> Project:
@@ -184,6 +351,7 @@ class Pipeline:
                 mode=project.content_mode, excerpt=excerpt, language=project.language,
                 target_seconds=project.episode_target_seconds, style_prompt=style,
                 overview=ctx.overview, characters=ctx.characters, locations=ctx.locations, episode_title=episode_title,
+                video_mode=project.video_mode or cfg.video.mode,
             )
         )
         raw_scenes = [s for s in data.get("scenes", []) if isinstance(s, dict)]
@@ -222,6 +390,7 @@ class Pipeline:
             scene.image_prompt = str(item.get("image_prompt", "")).strip()
             scene.image_prompt = _ensure_appearance(scene.image_prompt, _mentioned_characters(scene, ctx.characters))
             scene.video_prompt = str(item.get("video_prompt", "") or "").strip()
+            scene.end_image_prompt = str(item.get("end_image_prompt", "") or "").strip()
             project.scenes.append(scene)
         if not project.scenes:
             raise PipelineError("LLM 回傳的場景沒有可用的文字。")
@@ -260,12 +429,17 @@ class Pipeline:
             todo: set[str] = set()
             has_audio = bool(scene.audio_path) and storage.abs_path(scene.audio_path).exists()
             has_image = bool(scene.image_path) and storage.abs_path(scene.image_path).exists()
+            has_end_image = bool(scene.end_image_path) and storage.abs_path(scene.end_image_path).exists()
             has_video = bool(scene.video_path) and storage.abs_path(scene.video_path).exists()
             if "audio" in wanted and (force or not has_audio or scene.audio_stale):
                 todo.add("audio")
             if "image" in wanted and (force or not has_image or scene.image_stale):
                 todo.add("image")
-            if need_video and (force or not has_video or scene.video_stale or "image" in todo):
+            has_end_prompt = bool((scene.end_image_prompt or "").strip())
+            should_end_image = "end_image" in wanted or (kinds is None and video_mode == "keyframes" and has_end_prompt)
+            if should_end_image and (force or not has_end_image or scene.end_image_stale or "image" in todo):
+                todo.add("end_image")
+            if need_video and (force or not has_video or scene.video_stale or "image" in todo or "end_image" in todo):
                 todo.add("video")
             if todo:
                 scene.error = None
@@ -289,7 +463,7 @@ class Pipeline:
             return project
 
         tts = get_tts(cfg) if any("audio" in t for _, t in jobs) else None
-        image = get_image(cfg) if any("image" in t for _, t in jobs) else None
+        image = get_image(cfg) if any("image" in t or "end_image" in t for _, t in jobs) else None
         image_sem = asyncio.Semaphore(IMAGE_CONCURRENCY)
         video_sem = asyncio.Semaphore(cfg.video.concurrency)
         style = project.style_prompt or style_prompt(project.style_id)
@@ -309,19 +483,20 @@ class Pipeline:
                 raise ProviderError("這個場景沒有可朗讀的台詞。")
             if not scene.lines and not speakable(scene.narration):
                 raise ProviderError("這個場景沒有可朗讀的旁白。")
+            eff_speed = scene.tts_speed or project.tts_speed
             if spoken:
                 parts: list[Path] = []
                 for i, ln in enumerate(spoken):
                     part = path.parent / f"line_{i:02d}_{path.stem[-6:]}.mp3"
                     voice = series.character_voice(ctx, ln.speaker, project.voice)
-                    await tts.synthesize(ln.text, voice, project.tts_speed, part)
+                    await tts.synthesize(ln.text, voice, eff_speed, part)
                     ln.duration = round(await ffmpeg.probe_duration(part), 3)
                     parts.append(part)
                 await ffmpeg.concat_audio(parts, LINE_GAP_SECONDS, path)
                 for p in parts:
                     p.unlink(missing_ok=True)
             else:
-                await tts.synthesize(scene.narration, project.voice, project.tts_speed, path)
+                await tts.synthesize(scene.narration, project.voice, eff_speed, path)
             duration = await ffmpeg.probe_duration(path)
             storage.remove(scene.audio_path)
             scene.audio_path, scene.duration, scene.audio_stale = rel, round(duration, 3), False
@@ -330,44 +505,118 @@ class Pipeline:
 
         async def do_image(scene: Scene) -> None:
             assert image is not None
-            prompt = ", ".join(p for p in (cfg.image.prompt_prefix.strip(), scene.image_prompt.strip(), style.strip()) if p)
-            refs: list[Path] = []
+            prev_scene = project.scenes[scene.index - 1] if scene.index > 0 else None
+            first_scene = project.scenes[0] if scene.index > 0 else None
+            prompt = image_prompt_for(scene, style, prev_scene, first_scene, cfg.image.prompt_prefix)
+            refs: list[Path] = storyboard.binding_refs(scene)
             if cfg.image.use_references:
-                refs = [storage.abs_path(c.image_path) for c in _mentioned_characters(scene, ctx.characters) if c.image_path]
+                for c in ([] if scene.asset_bindings else _mentioned_characters(scene, ctx.characters)):
+                    if c.image_path:
+                        p = storage.abs_path(c.image_path)
+                        if p.is_file() and p not in refs:
+                            refs.append(p)
+                if scene.index > 0 and not scene.asset_bindings:
+                    if not scene.asset_bindings and prev_scene and prev_scene.image_path:
+                        p = storage.abs_path(prev_scene.image_path)
+                        if p.is_file() and p not in refs:
+                            refs.append(p)
+                    if not scene.asset_bindings and first_scene and first_scene.image_path:
+                        p = storage.abs_path(first_scene.image_path)
+                        if p.is_file() and p not in refs:
+                            refs.append(p)
+            prompt += storyboard.binding_prompt(scene)
             rel = storage.scene_rel(project.id, scene.id, "image", "png")
             async with image_sem:
                 await image.generate(prompt, cfg.image.negative_prompt, project.width, project.height, storage.abs_path(rel), reference_images=refs)
-            storage.remove(scene.image_path)
+            storyboard.remember(scene, "image")
             scene.image_path, scene.image_stale = rel, False
+            if video_mode == "keyframes" and scene.end_image_path:
+                scene.end_image_stale = True
             scene.video_stale = bool(scene.video_path) and video_mode != "t2v"
             invalidate_segment(scene)
             await step_done(f"場景 {scene.index + 1}/{n_total} 圖片完成")
 
+        async def do_end_image(scene: Scene) -> None:
+            assert image is not None
+            end_prompt_raw = (scene.end_image_prompt or "").strip()
+            if not end_prompt_raw:
+                motion_desc = (scene.video_prompt or "").strip() or "ending composition of the shot"
+                img_prompt = (scene.image_prompt or "").strip()
+                end_prompt_raw = f"{img_prompt}, ending frame of the shot, showing {motion_desc}" if img_prompt else motion_desc
+
+            prompt = end_image_prompt_for(scene, end_prompt_raw, style, cfg.image.prompt_prefix)
+            refs: list[Path] = storyboard.binding_refs(scene)
+            if scene.image_path:
+                start_p = storage.abs_path(scene.image_path)
+                if start_p.is_file():
+                    refs.append(start_p)
+            if cfg.image.use_references:
+                for c in ([] if scene.asset_bindings else _mentioned_characters(scene, ctx.characters)):
+                    if c.image_path:
+                        p = storage.abs_path(c.image_path)
+                        if p.is_file() and p not in refs:
+                            refs.append(p)
+            prompt += storyboard.binding_prompt(scene)
+            rel = storage.scene_rel(project.id, scene.id, "end_image", "png")
+            # Build anti-mutation negative prompt specifically targeting limb/head/tail duplication & fusion
+            neg_parts = [cfg.image.negative_prompt.strip()] if cfg.image.negative_prompt.strip() else []
+            neg_parts.append("extra limbs, extra arms, extra legs, extra tails, two tails, multiple tails, split tail, multiple heads, cloned faces, duplicate body, deformed limbs, fused bodies, mutation, bad anatomy, disfigured")
+            effective_negative = ", ".join(neg_parts)
+
+            async with image_sem:
+                await image.generate(prompt, effective_negative, project.width, project.height, storage.abs_path(rel), reference_images=refs)
+            storyboard.remember(scene, "end_image")
+            scene.end_image_path, scene.end_image_stale = rel, False
+            storyboard.remember(scene, "end_image")
+            scene.video_stale = bool(scene.video_path) and video_mode != "t2v"
+            invalidate_segment(scene)
+            await step_done(f"場景 {scene.index + 1}/{n_total} 尾幀完成")
+
         async def do_video(scene: Scene) -> None:
             assert video_provider is not None
+            prev_scene = project.scenes[scene.index - 1] if scene.index > 0 else None
+            first_scene = project.scenes[0] if scene.index > 0 else None
             start: Optional[Path] = None
             end: Optional[Path] = None
-            refs: list[Path] = []
+            refs: list[Path] = storyboard.binding_refs(scene)
             if video_mode in ("i2v", "keyframes"):
-                if not scene.image_path:
-                    raise ProviderError("需要先有場景圖片才能做圖生影片。")
-                start = storage.abs_path(scene.image_path)
-                if video_mode == "keyframes":
-                    nxt = project.scenes[scene.index + 1] if scene.index + 1 < len(project.scenes) else None
-                    if nxt is not None and nxt.image_path:
-                        end = storage.abs_path(nxt.image_path)
+                start, end = video_frames_for(scene, video_mode)
+
+                for c in ([] if scene.asset_bindings else _mentioned_characters(scene, ctx.characters)):
+                    if c.image_path:
+                        p = storage.abs_path(c.image_path)
+                        if p.is_file() and p not in refs:
+                            refs.append(p)
+                if not scene.asset_bindings and first_scene and first_scene.image_path:
+                    p = storage.abs_path(first_scene.image_path)
+                    if p.is_file() and p not in refs and p != start:
+                        refs.append(p)
             else:
-                refs = [storage.abs_path(c.image_path) for c in _mentioned_characters(scene, ctx.characters) if c.image_path]
+                for c in ([] if scene.asset_bindings else _mentioned_characters(scene, ctx.characters)):
+                    if c.image_path:
+                        p = storage.abs_path(c.image_path)
+                        if p.is_file() and p not in refs:
+                            refs.append(p)
+                if not scene.asset_bindings and first_scene and first_scene.image_path:
+                    p = storage.abs_path(first_scene.image_path)
+                    if p.is_file() and p not in refs:
+                        refs.append(p)
+                if not scene.asset_bindings and prev_scene and prev_scene.image_path:
+                    p = storage.abs_path(prev_scene.image_path)
+                    if p.is_file() and p not in refs:
+                        refs.append(p)
+
             rel = storage.scene_rel(project.id, scene.id, "clip", "mp4")
             request = VideoRequest(
-                prompt=video_prompt_for(scene, style), duration=(scene.duration or 5.0) + SCENE_TAIL_SECONDS,
+                prompt=video_prompt_for(scene, style, prev_scene, video_mode=video_mode) + (storyboard.binding_prompt(scene) if video_mode == "t2v" else storyboard.staging_prompt(scene)), duration=(scene.duration or 5.0) + SCENE_TAIL_SECONDS,
                 width=project.width, height=project.height, fps=cfg.video.fps, output_path=storage.abs_path(rel),
                 start_image=start, end_image=end, reference_images=refs,
             )
             async with video_sem:
                 await video_provider.generate(request)
-            storage.remove(scene.video_path)
+            storyboard.remember(scene, "video")
             scene.video_path, scene.video_stale = rel, False
+            storyboard.remember(scene, "video")
             invalidate_segment(scene)
             await step_done(f"場景 {scene.index + 1}/{n_total} AI 影片完成")
 
@@ -382,17 +631,29 @@ class Pipeline:
                 refresh_scene_status(project, scene)
                 return False
 
-        async def phase_one(scene: Scene, todo: set[str]) -> None:
-            if "audio" in todo and not await guarded(scene, do_audio(scene)):
-                return
-            if "image" in todo:
-                await guarded(scene, do_image(scene))
-            refresh_scene_status(project, scene)
-
         await progress(0.01, f"開始產生 {len(jobs)} 個場景的素材…")
         try:
-            await asyncio.gather(*(phase_one(scene, todo) for scene, todo in jobs))
-            # Videos run after every image exists (keyframes mode needs the next scene's image).
+            # Audio jobs run in parallel
+            audio_jobs = [scene for scene, todo in jobs if "audio" in todo]
+            if audio_jobs:
+                await asyncio.gather(*(guarded(scene, do_audio(scene)) for scene in audio_jobs))
+
+            # Image jobs run in scene order so each scene can reference the previous scene's image
+            # and master keyframe (原首幀)
+            image_jobs = [scene for scene, todo in jobs if "image" in todo]
+            image_jobs.sort(key=lambda s: s.index)
+            for scene in image_jobs:
+                await guarded(scene, do_image(scene))
+                refresh_scene_status(project, scene)
+
+            # End image jobs run after start images exist so each end image can reference its start image
+            end_image_jobs = [scene for scene, todo in jobs if "end_image" in todo and not scene.error]
+            end_image_jobs.sort(key=lambda s: s.index)
+            for scene in end_image_jobs:
+                await guarded(scene, do_end_image(scene))
+                refresh_scene_status(project, scene)
+
+            # Videos run after each scene's own start/end image jobs complete.
             video_jobs = [scene for scene, todo in jobs if "video" in todo and not scene.error]
             if video_jobs:
                 await asyncio.gather(*(guarded(scene, do_video(scene)) for scene in video_jobs))
@@ -420,6 +681,10 @@ class Pipeline:
         subtitle_position: str = "bottom",
     ) -> tuple[Optional[Path], list[ffmpeg.TimedOverlay]]:
         """Static (title) overlay plus per-line subtitle overlays for drama scenes."""
+        # In slide/presentation mode, subtitles are handled dynamically by SRT and studio
+        if project.input_mode == "slide":
+            return None, []
+
         title = project.title if project.show_title else None
         spoken = [ln for ln in scene.lines if speakable(ln.text)]
         timed: list[ffmpeg.TimedOverlay] = []
@@ -455,7 +720,13 @@ class Pipeline:
                 timed.append((path, t, end + (SCENE_TAIL_SECONDS if i == len(spoken) - 1 else 0)))
                 t = end
             return static, timed
-        subtitle = scene.display_text() if project.subtitle_enabled else None
+        # In presentation / slide mode, subtitles are managed dynamically via SRT and studio overlay
+        # Do not burn static scene text into the slide frames to avoid duplicate subtitles
+        if project.input_mode == "slide":
+            subtitle = None
+        else:
+            subtitle = scene.display_text() if project.subtitle_enabled else None
+
         if not title and not subtitle:
             return None, []
         static = scene_dir / "overlay.png"
@@ -494,7 +765,13 @@ class Pipeline:
         font_size = int(project.font_size * 2.333 * (project.width / 1080.0)) if project.font_size else cfg.render.subtitle_size
         sub_pos = project.subtitle_position or "bottom"
 
+        is_slide = project.input_mode == "slide"
+        pre_pad = slide_service.PRE_PAD_SECONDS if is_slide else 0.0
+        post_pad = slide_service.POST_PAD_SECONDS if is_slide else 0.0
+
         segments: list[Path] = []
+        slides_subtitles: list[dict] = []
+        cumulative_offset = 0.0
         n = len(project.scenes)
         for i, scene in enumerate(project.scenes):
             await progress(0.05 + 0.75 * i / n, f"合成場景 {i + 1}/{n}…")
@@ -502,18 +779,34 @@ class Pipeline:
             static, timed = await asyncio.to_thread(
                 self._scene_overlays, project, scene, scene_dir, font_pref, font_size, sub_pos
             )
-            duration = (scene.duration or await ffmpeg.probe_duration(storage.abs_path(scene.audio_path or ""))) + SCENE_TAIL_SECONDS
+            has_audio = bool(scene.audio_path) and storage.abs_path(scene.audio_path).is_file()
+            if has_audio:
+                raw_audio_dur = scene.duration or await ffmpeg.probe_duration(storage.abs_path(scene.audio_path or ""))
+            else:
+                raw_audio_dur = scene.duration or 5.0
+            if is_slide:
+                duration = raw_audio_dur + pre_pad + post_pad
+            else:
+                duration = raw_audio_dur + (SCENE_TAIL_SECONDS if has_audio else 0.0)
             rel = storage.scene_rel(project.id, scene.id, "segment", "mp4")
             await ffmpeg.render_segment(
                 output=storage.abs_path(rel), width=project.width, height=project.height, fps=fps, duration=duration,
-                audio=storage.abs_path(scene.audio_path or ""),
+                audio=storage.abs_path(scene.audio_path) if has_audio else None,
                 image=storage.abs_path(scene.image_path) if scene.image_path else None,
+                end_image=storage.abs_path(scene.end_image_path) if scene.end_image_path else None,
                 clip=storage.abs_path(scene.video_path) if (project.motion == "ai_video" and scene.video_path) else None,
                 overlay=static, timed_overlays=timed, motion=project.motion, scene_index=i, crf=cfg.render.crf,
+                pre_pad=pre_pad, post_pad=post_pad,
             )
             storage.remove(scene.segment_path)
             scene.segment_path = rel
             segments.append(storage.abs_path(rel))
+
+            # Record subtitle data
+            sentences = slide_service.calculate_proportional_subtitles(scene.narration, raw_audio_dur)
+            slides_subtitles.append({"slide_start": cumulative_offset, "sentences": sentences})
+            cumulative_offset += duration
+
             await self.db.save_project(project)
 
         await progress(0.85, "串接所有場景…")
@@ -542,13 +835,143 @@ class Pipeline:
         else:
             joined.replace(final_abs)
 
+        # Generate synchronized SRT file
+        if slides_subtitles:
+            srt_rel = storage.output_rel(project.id, "subtitles", "srt")
+            srt_abs = storage.abs_path(srt_rel)
+            storage.remove(project.subtitles_path)
+            slide_service.generate_presentation_srt(slides_subtitles, srt_abs, pre_pad=pre_pad)
+            project.subtitles_path = srt_rel
+
         storage.remove(project.final_video_path)
         project.final_video_path = final_rel
+        project.raw_video_path = final_rel
         project.final_video_duration = round(total, 2)
         project.final_video_size = final_abs.stat().st_size
         refresh_project_status(project)
         await self.db.save_project(project)
         await progress(1.0, "影片合成完成")
+        return project
+
+    # ------------------------------------------------------------ MiniMax H3 (video clone)
+    async def generate_h3(
+        self,
+        project: Project,
+        progress: Progress,
+        segment_indexes: Optional[list[int]] = None,
+        force: bool = False,
+    ) -> Project:
+        """Generate every H3 part with MiniMax (R2V / T2V / I2V), trim, conform and join into the final video."""
+        cfg = config_manager.get()
+        if not project.h3_segments:
+            raise PipelineError("此專案沒有 H3 分段，請先用「短影片分析復刻（MiniMax H3）」建立專案。")
+        if cfg.video.provider != "minimax":
+            raise PipelineError("H3 生成需要 MiniMax：請到 設定 → 影片，將 provider 改為 minimax 並填入 API Key。")
+        provider = get_video(cfg)
+        if provider is None:
+            raise PipelineError("無法建立 MiniMax 影片 provider。")
+
+        mode = project.h3_mode
+        pictures = [storage.abs_path(r) for r in project.h3_reference_images if storage.abs_path(r).is_file()]
+        wanted = set(segment_indexes) if segment_indexes else None
+        targets = [
+            s for s in project.h3_segments
+            if (wanted is None or s.index in wanted)
+            and (force or wanted is not None or not (s.clip_path and storage.abs_path(s.clip_path).exists()))
+        ]
+        h3_dir = storage.project_dir(project.id) / "h3"
+        h3_dir.mkdir(parents=True, exist_ok=True)
+        sem = asyncio.Semaphore(max(1, cfg.video.concurrency))
+        done_count = 0
+        n_total = max(1, len(targets))
+        await progress(0.02, f"準備生成 {len(targets)} 段 H3 影片…")
+
+        async def one(seg: Any) -> None:
+            nonlocal done_count
+            if not seg.prompt.strip():
+                seg.status, seg.error = "failed", "此段沒有提示詞"
+                return
+            def p(rel: Optional[str]) -> Optional[Path]:
+                return storage.abs_path(rel) if rel and storage.abs_path(rel).is_file() else None
+
+            ref_v, ref_a = p(seg.ref_video_path), p(seg.ref_audio_path)
+            req = VideoRequest(
+                prompt=seg.prompt,
+                duration=float(seg.request_duration),
+                width=project.width,
+                height=project.height,
+                fps=cfg.video.fps,
+                output_path=h3_dir / f"part_{seg.index + 1:02d}_raw.mp4",
+                h3_mode=mode,
+                ratio=project.aspect_ratio,
+            )
+            if mode == "ref2va":
+                req.reference_images = pictures
+                if project.h3_use_ref_video and ref_v:
+                    req.reference_videos = [ref_v]
+                if project.h3_use_ref_audio and ref_a and (req.reference_videos or req.reference_images):
+                    req.reference_audios = [ref_a]
+                if not req.reference_videos and not req.reference_images and ref_v:
+                    req.reference_videos = [ref_v]  # R2V needs at least one visual reference
+            elif mode in ("i2va", "fl2va"):
+                req.start_image = p(seg.first_frame_path)
+                if mode == "fl2va":
+                    req.end_image = p(seg.last_frame_path)
+            async with sem:
+                seg.status, seg.error = "generating", None
+                await self.db.save_project(project)
+                try:
+                    raw = await provider.generate(req)
+                    actual = await ffmpeg.probe_duration(raw)
+                    keep = min(seg.duration, actual) if actual > 0 else seg.duration
+                    rel = storage.output_rel(project.id, f"h3_part_{seg.index + 1:02d}", "mp4")
+                    await ffmpeg.normalize_clip(raw, keep, project.width, project.height, cfg.video.fps, storage.abs_path(rel), crf=cfg.render.crf)
+                    raw.unlink(missing_ok=True)
+                    storage.remove(seg.clip_path)
+                    seg.clip_path, seg.status, seg.error = rel, "done", None
+                    if keep + 0.05 < seg.duration:
+                        seg.warnings.append(f"H3 輸出只有 {actual:.2f}s，短於本段 {seg.duration:.2f}s。")
+                    scene = next((sc for sc in project.scenes if sc.index == seg.index), None)
+                    if scene is not None:
+                        scene.video_path = rel
+                        scene.segment_path = rel
+                        scene.video_stale = False
+                        scene.error = None
+                except Exception as exc:
+                    seg.status, seg.error = "failed", str(exc)
+                    scene = next((sc for sc in project.scenes if sc.index == seg.index), None)
+                    if scene is not None:
+                        scene.error = f"H3 生成失敗：{exc}"
+                    raise
+                finally:
+                    done_count += 1
+                    refresh_project_status(project)
+                    await self.db.save_project(project)
+                    await progress(0.05 + 0.8 * done_count / n_total, f"H3 第 {seg.index + 1} 段 {'完成' if seg.status == 'done' else '失敗'}")
+
+        results = await asyncio.gather(*(one(s) for s in targets), return_exceptions=True)
+        errors = [r for r in results if isinstance(r, BaseException)]
+        for r in errors:
+            if isinstance(r, asyncio.CancelledError):
+                raise r
+
+        ready = [s for s in project.h3_segments if s.clip_path and storage.abs_path(s.clip_path).exists()]
+        if len(ready) == len(project.h3_segments):
+            await progress(0.9, "串接所有 H3 段落…")
+            clips = [storage.abs_path(s.clip_path or "") for s in sorted(project.h3_segments, key=lambda x: x.index)]
+            final_rel = storage.output_rel(project.id, "final", "mp4")
+            final_abs = storage.abs_path(final_rel)
+            await ffmpeg.concat(clips, final_abs)
+            storage.remove(project.final_video_path)
+            project.final_video_path = final_rel
+            project.raw_video_path = final_rel
+            project.final_video_duration = round(await ffmpeg.probe_duration(final_abs), 2)
+            project.final_video_size = final_abs.stat().st_size
+        refresh_project_status(project)
+        await self.db.save_project(project)
+        if errors:
+            raise PipelineError(f"{len(errors)} 段 H3 生成失敗：{errors[0]}")
+        await progress(1.0, "H3 影片生成完成" if project.final_video_path else "H3 段落生成完成")
         return project
 
     # ------------------------------------------------------------ full
@@ -559,7 +982,9 @@ class Pipeline:
 
             return cb
 
-        if not project.scenes:
+        if project.h3_segments:
+            return await self.generate_h3(project, progress)
+        if not project.scenes or project.input_mode == "prompt":
             project = await self.generate_script(project, await scaled(0.0, 0.12))
         project = await self.generate_assets(project, await scaled(0.12, 0.72))
         return await self.render(project, await scaled(0.72, 1.0))
@@ -647,10 +1072,10 @@ class Pipeline:
             raise PipelineError("請先填寫角色的外觀描述。")
         cfg: AppConfig = config_manager.get()
         style = project.style_prompt or style_prompt(project.style_id)
-        prompt = ", ".join(p for p in (cfg.image.prompt_prefix.strip(), f"character portrait, {ch.appearance.strip()}, upper body, looking at the camera, simple neutral background", style) if p)
+        prompt = ", ".join(p for p in (cfg.image.prompt_prefix.strip(), f"Character identity reference sheet of ONE identical character: {ch.appearance.strip()}. Exactly four clearly separated panels on a neutral background. Left two-thirds: three equal full-body orthographic views, front view, side profile, and rear view, head to feet fully visible, same scale, neutral standing pose, identical clothing and proportions. Right one-third: a large prominent front-facing head and face close-up cropped at the neck, showing only the neck and above, no shoulders or torso. Face fills this panel with clearly visible eyes, nose, mouth, ears, hairline and facial details. All four panels depict the SAME person, same age, face, hairstyle and colors. No text, labels, watermark or extra views", style) if p)
         await progress(0.1, f"生成角色圖：{ch.name}…")
         rel = f"{project.id}/characters/{ch.id}_{secrets.token_hex(3)}.png"
-        await get_image(cfg).generate(prompt, cfg.image.negative_prompt, 1024, 1024, storage.abs_path(rel))
+        await get_image(cfg).generate(prompt, cfg.image.negative_prompt, 1536, 1024, storage.abs_path(rel))
         storage.remove(ch.image_path)
         ch.image_path = rel
         await self.db.save_project(project)

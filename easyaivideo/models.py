@@ -6,16 +6,18 @@ import secrets
 from datetime import datetime, timezone
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
-InputMode = Literal["topic", "script", "novel"]
+InputMode = Literal["topic", "script", "novel", "slide", "prompt", "video"]
 AspectRatio = Literal["9:16", "16:9", "1:1"]
 Motion = Literal["kenburns", "static", "ai_video"]
 ProjectStatus = Literal["draft", "scripted", "assets_ready", "rendered"]
 SceneStatus = Literal["pending", "partial", "ready", "failed"]
-TaskType = Literal["script", "assets", "render", "full", "analyze", "plan", "character_image", "review", "publish"]
+TaskType = Literal["script", "assets", "render", "full", "analyze", "plan", "character_image", "review", "publish", "h3_generate"]
+H3Mode = Literal["ref2va", "t2va", "i2va", "fl2va"]
+H3SegmentStatus = Literal["pending", "generating", "done", "failed"]
 TaskStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
-AssetKind = Literal["audio", "image", "video"]
+AssetKind = Literal["audio", "image", "end_image", "video"]
 Kind = Literal["single", "series", "episode"]
 VideoMode = Literal["i2v", "t2v", "keyframes"]
 ContentMode = Literal["narration", "drama"]
@@ -62,11 +64,49 @@ class Line(BaseModel):
     duration: Optional[float] = None
 
 
+class BoundAsset(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("asset"))
+    kind: Literal["character", "location", "prop"]
+    name: str = Field(min_length=1, max_length=100)
+    description: str = ""
+    image_path: Optional[str] = None
+
+    @computed_field
+    @property
+    def image_url(self) -> Optional[str]:
+        return _url(self.image_path)
+
+
+class MediaVersion(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("ver"))
+    kind: Literal["image", "end_image", "video"]
+    path: str
+    created_at: str = Field(default_factory=now_iso)
+
+    @computed_field
+    @property
+    def url(self) -> Optional[str]:
+        return _url(self.path)
+
+
+class StagePosition(BaseModel):
+    character_id: str = Field(min_length=1, max_length=100)
+    name: str = Field(min_length=1, max_length=100)
+    x: float = Field(50, ge=0, le=100, allow_inf_nan=False)
+    y: float = Field(50, ge=0, le=100, allow_inf_nan=False)
+    facing: float = Field(0, ge=0, lt=360, allow_inf_nan=False)
+
+
 class Scene(BaseModel):
     id: str
     index: int = 0
+    group: str = ""
+    stage_positions: list[StagePosition] = Field(default_factory=list, max_length=30)
+    asset_bindings: list[BoundAsset] = Field(default_factory=list)
+    media_history: list[MediaVersion] = Field(default_factory=list)
     narration: str = ""
     image_prompt: str = ""
+    end_image_prompt: str = ""  # prompt for the scene's ending frame
     video_prompt: str = ""  # motion / camera description for AI video providers (optional)
     lines: list[Line] = Field(default_factory=list)
     location: Optional[str] = None
@@ -74,12 +114,15 @@ class Scene(BaseModel):
     # e.g. "proj_ab12/scenes/s01/audio.mp3".
     audio_path: Optional[str] = None
     image_path: Optional[str] = None
+    end_image_path: Optional[str] = None
     video_path: Optional[str] = None
     segment_path: Optional[str] = None
     duration: Optional[float] = None
+    tts_speed: Optional[float] = None
     status: SceneStatus = "pending"
     audio_stale: bool = False
     image_stale: bool = False
+    end_image_stale: bool = False
     video_stale: bool = False
     error: Optional[str] = None
 
@@ -92,6 +135,11 @@ class Scene(BaseModel):
     @property
     def image_url(self) -> Optional[str]:
         return _url(self.image_path)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def end_image_url(self) -> Optional[str]:
+        return _url(self.end_image_path)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -122,6 +170,55 @@ class Task(BaseModel):
     created_at: str = Field(default_factory=now_iso)
     started_at: Optional[str] = None
     finished_at: Optional[str] = None
+
+
+class H3Segment(BaseModel):
+    """One <=15 s MiniMax H3 generation unit cut from the source video (video clone flow)."""
+
+    index: int = 0
+    start: float = 0.0  # source seconds
+    end: float = 0.0
+    duration: float = 0.0  # actual seconds kept after trimming the H3 output
+    request_duration: int = 5  # integer seconds sent to H3 (4-15)
+    reason: str = ""  # why the cut point was chosen (breath / breath+cut / ...)
+    prompt: str = ""  # ready-to-paste English H3 prompt (segment-local clock)
+    hand_off_state: str = ""
+    shots: list[dict[str, Any]] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    # Paths are relative to the projects directory
+    ref_video_path: Optional[str] = None
+    ref_audio_path: Optional[str] = None
+    first_frame_path: Optional[str] = None
+    last_frame_path: Optional[str] = None
+    sheet_paths: list[str] = Field(default_factory=list)
+    clip_path: Optional[str] = None
+    status: H3SegmentStatus = "pending"
+    error: Optional[str] = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def prompt_chars(self) -> int:
+        return len(self.prompt)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def clip_url(self) -> Optional[str]:
+        return _url(self.clip_path)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def ref_video_url(self) -> Optional[str]:
+        return _url(self.ref_video_path)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def first_frame_url(self) -> Optional[str]:
+        return _url(self.first_frame_path)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def sheet_urls(self) -> list[str]:
+        return [u for u in (_url(p) for p in self.sheet_paths) if u]
 
 
 class Character(BaseModel):
@@ -326,6 +423,18 @@ class ProjectSettings(BaseModel):
     episode_target_seconds: int = Field(120, ge=30, le=600)
     publish_settings: ProjectPublishSettings = Field(default_factory=ProjectPublishSettings)
 
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name == "publish_settings" and isinstance(value, dict):
+            value = ProjectPublishSettings(**value)
+        super().__setattr__(name, value)
+
+    @field_validator("publish_settings", mode="before")
+    @classmethod
+    def _validate_publish_settings(cls, v: Any) -> Any:
+        if isinstance(v, dict):
+            return ProjectPublishSettings(**v)
+        return v
+
 
 class Project(ProjectSettings):
     id: str
@@ -335,9 +444,12 @@ class Project(ProjectSettings):
     status: ProjectStatus = "draft"
     scenes: list[Scene] = Field(default_factory=list)
     scene_counter: int = 0
+    assets: list[BoundAsset] = Field(default_factory=list)
     final_video_path: Optional[str] = None
     final_video_duration: Optional[float] = None
     final_video_size: Optional[int] = None
+    raw_video_path: Optional[str] = None
+    subtitles_path: Optional[str] = None
     active_task: Optional[Task] = None
     # series data
     source_files: list[SourceFile] = Field(default_factory=list)
@@ -347,6 +459,16 @@ class Project(ProjectSettings):
     locations: list[Location] = Field(default_factory=list)
     episodes: list[Episode] = Field(default_factory=list)
     review: Optional[ProjectReview] = None
+    h3_prompt: Optional[str] = None
+    forensic_report: Optional[str] = None
+    source_url: Optional[str] = None  # web page the cloned video was downloaded from (None = uploaded file)
+    source_meta: dict[str, Any] = Field(default_factory=dict)  # title / uploader / extractor / duration ...
+    h3_mode: H3Mode = "ref2va"
+    h3_segments: list[H3Segment] = Field(default_factory=list)
+    h3_use_ref_video: bool = True  # send the source segment as <Video 1>
+    h3_use_ref_audio: bool = True  # send the source segment audio as <Audio 1> (copied narration)
+    h3_reference_images: list[str] = Field(default_factory=list)  # <Picture 1..N> identity locks
+    h3_subjects: str = ""  # shared subject_definitions text reused by every segment
     publish_status: PublishStatus = "idle"
     publish_records: list[PublishRecord] = Field(default_factory=list)
     created_at: str = Field(default_factory=now_iso)
@@ -366,6 +488,16 @@ class Project(ProjectSettings):
     @property
     def final_video_url(self) -> Optional[str]:
         return _url(self.final_video_path)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def raw_video_url(self) -> Optional[str]:
+        return _url(self.raw_video_path or self.final_video_path)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def subtitles_url(self) -> Optional[str]:
+        return _url(self.subtitles_path)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -413,6 +545,23 @@ class ProjectCreate(ProjectSettings):
     auto_start: bool = True
 
 
+class QuickVideoRequest(BaseModel):
+    """Request to generate a single video from a single prompt."""
+
+    prompt: str
+    title: Optional[str] = None
+    aspect_ratio: AspectRatio = "16:9"
+    duration: float = Field(5.0, ge=1.0, le=30.0)
+    motion: Motion = "ai_video"
+    video_mode: Optional[VideoMode] = "i2v"
+    style_id: str = "cinematic"
+    style_prompt: Optional[str] = None
+    voice: Optional[str] = None
+    with_narration: bool = False
+    image_base64: Optional[str] = None
+    end_image_base64: Optional[str] = None
+
+
 class ProjectUpdate(BaseModel):
     title: Optional[str] = None
     topic: Optional[str] = None
@@ -443,6 +592,13 @@ class ProjectUpdate(BaseModel):
     locations: Optional[list[Location]] = None
     publish_settings: Optional[ProjectPublishSettings] = None
 
+    @field_validator("publish_settings", mode="before")
+    @classmethod
+    def _validate_publish_settings(cls, v: Any) -> Any:
+        if isinstance(v, dict):
+            return ProjectPublishSettings(**v)
+        return v
+
 
 class PublishRequest(BaseModel):
     platforms: Optional[list[PublishPlatform]] = None
@@ -455,20 +611,37 @@ class PublishRequest(BaseModel):
 
 
 class SceneUpdate(BaseModel):
+    stage_positions: Optional[list[StagePosition]] = Field(None, max_length=30)
+    group: Optional[str] = Field(None, max_length=100)
+    asset_ids: Optional[list[str]] = None
     narration: Optional[str] = None
     image_prompt: Optional[str] = None
+    end_image_prompt: Optional[str] = None
     video_prompt: Optional[str] = None
     lines: Optional[list[Line]] = None
+    tts_speed: Optional[float] = None
 
 
 class SceneCreate(BaseModel):
+    group: str = Field("", max_length=100)
     after: Optional[str] = None
     narration: str = ""
     image_prompt: str = ""
+    end_image_prompt: str = ""
 
 
 class SceneReorder(BaseModel):
     scene_ids: list[str]
+
+
+class H3SegmentUpdate(BaseModel):
+    prompt: Optional[str] = Field(None, max_length=20000)
+    request_duration: Optional[int] = Field(None, ge=4, le=15)
+
+
+class H3GenerateRequest(BaseModel):
+    segment_indexes: Optional[list[int]] = None
+    force: bool = False
 
 
 class AssetsRequest(BaseModel):
@@ -486,3 +659,40 @@ class TestResult(BaseModel):
     ok: bool
     message: str
     elapsed_ms: int
+
+
+class SubtitleCueModel(BaseModel):
+    id: int
+    start: float
+    end: float
+    text: str
+
+
+class SubtitlesUpdateRequest(BaseModel):
+    cues: list[SubtitleCueModel]
+
+
+class BurnSubtitlesRequest(BaseModel):
+    font_name: Optional[str] = None
+    font_size: int = 22
+    primary_color: str = "&H00FFFFFF"  # ASS format: &HAABBGGRR
+    back_color: str = "&H80000000"     # translucent black or color
+    border_style: int = 1              # 1 = outline, 3 = box
+    outline: int = 2
+    outline_color: str = "&H00000000"
+    alignment: int = 2                 # ASS Alignment (2 = bottom-center, 5 = top-center, 8 = middle-center, etc.)
+    margin_v: int = 35
+    margin_l: int = 20
+
+
+
+class TrimVideoRequest(BaseModel):
+    start: float
+    end: float
+
+
+class SynthesizeCueRequest(BaseModel):
+    text: str
+    voice: Optional[str] = None
+    speed: Optional[float] = None
+

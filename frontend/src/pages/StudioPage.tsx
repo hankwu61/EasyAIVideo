@@ -1,8 +1,11 @@
+import AssetLibrary from '../components/AssetLibrary'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { Download, FileText, Plus, X } from 'lucide-react'
 import {
   ApiError,
+  getAssetLibrary,
+  selectMediaVersion,
   addScene,
   cancelTask,
   deleteScene,
@@ -20,6 +23,7 @@ import {
   uploadSceneAsset,
 } from '../api'
 import ConfirmDialog from '../components/ConfirmDialog'
+import H3PromptModal from '../components/H3PromptModal'
 import PreviewPanel from '../components/PreviewPanel'
 import PublishModal from '../components/PublishModal'
 import ReviewPanel from '../components/ReviewPanel'
@@ -27,11 +31,12 @@ import SceneCard, { type SceneActions } from '../components/SceneCard'
 import StudioHeader, { BackLink } from '../components/StudioHeader'
 import StudioSettings from '../components/StudioSettings'
 import TaskBar from '../components/TaskBar'
+import TextExportMenu from '../components/TextExportMenu'
 import { useToast } from '../components/Toast'
 import { ErrorAlert, Skeleton } from '../components/ui'
 import { useResources } from '../hooks/useResources'
 import { useLang } from '../i18n'
-import type { AssetKind, Project, ScenePatch, Task, UploadKind } from '../types'
+import type { AssetKind, BoundAsset, Project, ScenePatch, Task, UploadKind } from '../types'
 
 const POLL_MS = 1500
 
@@ -41,6 +46,9 @@ export default function StudioPage() {
   const toast = useToast()
   const { resources, error: resourcesError, reload: reloadResources } = useResources()
 
+  const [library, setLibrary] = useState<BoundAsset[]>([])
+  useEffect(() => { getAssetLibrary(id).then(setLibrary).catch(() => {}) }, [id])
+  const [groupFilter, setGroupFilter] = useState<string | null>(null)
   const [project, setProject] = useState<Project | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [notFound, setNotFound] = useState(false)
@@ -50,6 +58,7 @@ export default function StudioPage() {
   const [pendingDeleteScene, setPendingDeleteScene] = useState<string | null>(null)
   const [deletingScene, setDeletingScene] = useState(false)
   const [publishOpen, setPublishOpen] = useState(false)
+  const [h3ModalOpen, setH3ModalOpen] = useState(false)
 
   const [titleDraft, setTitleDraft] = useState('')
   const titleFocused = useRef(false)
@@ -171,6 +180,10 @@ export default function StudioPage() {
   }
 
   const sceneActions: SceneActions = {
+    selectVersion: async (sceneId, versionId) => {
+      try { setProject(await selectMediaVersion(id, sceneId, versionId)) }
+      catch (e) { toast.error(errorMessage(e)) }
+    },
     patch: async (sceneId, body: ScenePatch) => {
       try {
         setProject(await patchScene(id, sceneId, body))
@@ -288,6 +301,7 @@ export default function StudioPage() {
         onReview={() => void startTask(() => reviewProject(id))}
         onPublish={() => setPublishOpen(true)}
         onAll={() => void startTask(() => generateAll(id))}
+        onViewH3={() => setH3ModalOpen(true)}
       />
 
       {project.active_task && <TaskBar task={project.active_task} onCancel={() => void onCancel()} cancelling={cancelling} />}
@@ -320,6 +334,7 @@ export default function StudioPage() {
               <span className="ml-2 text-sm font-normal text-muted">{t('scene_count', { n: project.scenes.length })}</span>
             </h2>
             <div className="flex items-center gap-1">
+              {hasScenes && <TextExportMenu project={project} />}
               {project.scenes.some((s) => s.image_url) && (
                 <a className="btn-ghost btn-sm" href={`/api/projects/${project.id}/scenes/images.zip`} download>
                   <Download size={14} />
@@ -333,12 +348,22 @@ export default function StudioPage() {
             </div>
           </div>
 
+          <AssetLibrary projectId={id} library={library} onChange={setLibrary} disabled={busy} />
+          <div className="my-3 flex flex-wrap gap-2" aria-label="分鏡群組篩選">
+            {[null, '', ...Array.from(new Set(project.scenes.map(s => s.group || '').filter(Boolean)))].map(g => (
+              <button key={g ?? '__all'} className={groupFilter === g ? 'btn-primary btn-sm' : 'btn-ghost btn-sm'} onClick={() => setGroupFilter(g)}>
+                {g === null ? '全部分鏡' : g || '未分組'} ({project.scenes.filter(s => g === null || (s.group || '') === g).length})
+              </button>
+            ))}
+          </div>
           {hasScenes ? (
             <div className="space-y-3">
-              {project.scenes.map((scene, i) => (
+              {project.scenes.map((scene, i) => (groupFilter === null || (scene.group || '') === groupFilter) && (
                 <SceneCard
                   key={scene.id}
                   scene={scene}
+                  library={library}
+                  groups={Array.from(new Set(project.scenes.map(s => s.group || '').filter(Boolean)))}
                   index={i}
                   total={project.scenes.length}
                   aspect={project.aspect_ratio}
@@ -410,7 +435,22 @@ export default function StudioPage() {
         isOpen={publishOpen}
         onClose={() => setPublishOpen(false)}
         onProjectUpdated={(p) => setProject(p)}
-        onPublishTriggered={() => void load(true)}
+        onPublishTriggered={(task) => {
+          if (task) {
+            setLastTask(null)
+            setProject((p) => (p ? { ...p, active_task: task } : p))
+          }
+          void load(true)
+        }}
+      />
+
+      <H3PromptModal
+        project={project}
+        isOpen={h3ModalOpen}
+        onClose={() => setH3ModalOpen(false)}
+        onProjectChange={setProject}
+        onStartTask={startTask}
+        busy={busy}
       />
     </div>
   )

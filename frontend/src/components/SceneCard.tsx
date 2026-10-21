@@ -1,3 +1,4 @@
+import StoryboardFields from './StoryboardFields'
 import { useEffect, useRef, useState } from 'react'
 import {
   Check,
@@ -14,7 +15,7 @@ import {
   Upload,
 } from 'lucide-react'
 import { useLang } from '../i18n'
-import type { AspectRatio, AssetKind, ContentMode, Scene, ScenePatch, SceneReview, UploadKind } from '../types'
+import type { AspectRatio, BoundAsset, AssetKind, ContentMode, Scene, ScenePatch, SceneReview, UploadKind } from '../types'
 import { cx, formatSeconds } from '../utils'
 import LinesEditor from './LinesEditor'
 import { AI_VIDEO_MOTION } from './ProjectSettingsFields'
@@ -22,6 +23,7 @@ import SceneMenu from './SceneMenu'
 import { SceneStatusDot, Spinner, StaleChip } from './ui'
 
 export interface SceneActions {
+  selectVersion: (sceneId: string, versionId: string) => Promise<void>
   patch: (sceneId: string, body: ScenePatch) => Promise<boolean>
   regenerate: (sceneId: string, kinds: AssetKind[] | null) => Promise<void>
   upload: (sceneId: string, kind: UploadKind, file: File) => Promise<void>
@@ -32,6 +34,8 @@ export interface SceneActions {
 
 interface SceneCardProps {
   scene: Scene
+  library?: BoundAsset[]
+  groups?: string[]
   index: number
   total: number
   aspect: AspectRatio
@@ -46,12 +50,12 @@ interface SceneCardProps {
   review?: SceneReview | null
 }
 
-type TextField = 'narration' | 'image_prompt' | 'video_prompt'
+type TextField = 'narration' | 'image_prompt' | 'end_image_prompt' | 'video_prompt'
 
 const thumbWidth: Record<AspectRatio, string> = {
-  '9:16': 'w-28 sm:w-32',
-  '16:9': 'w-48 sm:w-60',
-  '1:1': 'w-36 sm:w-40',
+  '9:16': 'w-32 sm:w-36',
+  '16:9': 'w-56 sm:w-64',
+  '1:1': 'w-40 sm:w-44',
 }
 const thumbAspect: Record<AspectRatio, string> = { '9:16': '9 / 16', '16:9': '16 / 9', '1:1': '1 / 1' }
 
@@ -67,6 +71,8 @@ function useDraft(serverValue: string) {
 
 export default function SceneCard({
   scene,
+  library = [],
+  groups = [],
   index,
   total,
   aspect,
@@ -81,13 +87,17 @@ export default function SceneCard({
   const drafts = {
     narration: useDraft(scene.narration),
     image_prompt: useDraft(scene.image_prompt),
+    end_image_prompt: useDraft(scene.end_image_prompt ?? ''),
     video_prompt: useDraft(scene.video_prompt ?? ''),
   }
   const [savedFlash, setSavedFlash] = useState<TextField | null>(null)
   const [uploading, setUploading] = useState<UploadKind | null>(null)
   const [working, setWorking] = useState(false)
-  const [dragOver, setDragOver] = useState(false)
+  const [dragOverStart, setDragOverStart] = useState(false)
+  const [dragOverEnd, setDragOverEnd] = useState(false)
+  const [activeFrameTab, setActiveFrameTab] = useState<'start' | 'end'>('start')
   const imageInput = useRef<HTMLInputElement>(null)
+  const endImageInput = useRef<HTMLInputElement>(null)
   const audioInput = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -138,7 +148,7 @@ export default function SceneCard({
       )}
     </div>
   )
-  const textarea = (field: 'image_prompt' | 'video_prompt', placeholder: string) => {
+  const textarea = (field: TextField, placeholder: string) => {
     const draft = drafts[field]
     return (
       <textarea
@@ -153,6 +163,12 @@ export default function SceneCard({
     )
   }
 
+  const isStartTab = activeFrameTab === 'start'
+  const currentImageUrl = isStartTab ? scene.image_url : scene.end_image_url
+  const currentImageStale = isStartTab ? scene.image_stale : scene.end_image_stale
+  const currentUploading = isStartTab ? uploading === 'image' : uploading === 'end_image'
+  const currentDragOver = isStartTab ? dragOverStart : dragOverEnd
+
   return (
     <div
       id={`scene-${scene.id}`}
@@ -162,65 +178,102 @@ export default function SceneCard({
         working && 'opacity-70',
       )}
     >
-      {/* Thumbnail */}
+      {/* Thumbnail column: Start Frame / End Frame switchable preview */}
       <div className={cx('relative shrink-0 space-y-2', thumbWidth[aspect])}>
+        {/* Frame switch tabs */}
+        <div className="flex rounded-md border border-border bg-panel-2 p-0.5 text-[11px] font-medium">
+          <button
+            type="button"
+            className={cx(
+              'flex-1 rounded py-0.5 text-center transition',
+              isStartTab ? 'bg-panel text-fg shadow-sm font-semibold' : 'text-muted hover:text-fg',
+            )}
+            onClick={() => setActiveFrameTab('start')}
+          >
+            {t('start_frame')}
+          </button>
+          <button
+            type="button"
+            className={cx(
+              'flex-1 rounded py-0.5 text-center transition flex items-center justify-center gap-1',
+              !isStartTab ? 'bg-panel text-fg shadow-sm font-semibold' : 'text-muted hover:text-fg',
+            )}
+            onClick={() => setActiveFrameTab('end')}
+          >
+            <span>{t('end_frame')}</span>
+            {scene.end_image_url && <span className="h-1.5 w-1.5 rounded-full bg-accent" />}
+          </button>
+        </div>
+
         <div
           className={cx(
             'relative w-full overflow-hidden rounded-lg border bg-bg-elev transition',
-            dragOver ? 'border-accent ring-2 ring-accent/40' : 'border-border',
+            currentDragOver ? 'border-accent ring-2 ring-accent/40' : 'border-border',
           )}
           style={{ aspectRatio: thumbAspect[aspect] }}
           onDragOver={(e) => {
             if (disabled) return
             e.preventDefault()
-            setDragOver(true)
+            if (isStartTab) setDragOverStart(true)
+            else setDragOverEnd(true)
           }}
-          onDragLeave={() => setDragOver(false)}
+          onDragLeave={() => {
+            if (isStartTab) setDragOverStart(false)
+            else setDragOverEnd(false)
+          }}
           onDrop={(e) => {
             e.preventDefault()
-            setDragOver(false)
+            setDragOverStart(false)
+            setDragOverEnd(false)
             if (disabled) return
             const file = e.dataTransfer.files?.[0]
-            if (file && file.type.startsWith('image/')) void onFile('image', file)
+            if (file && file.type.startsWith('image/')) {
+              void onFile(isStartTab ? 'image' : 'end_image', file)
+            }
           }}
           title={t('drop_image_hint')}
         >
-          {scene.image_url ? (
-            <a href={scene.image_url} target="_blank" rel="noreferrer" title={t('open_image')}>
-              <img src={scene.image_url} alt="" className="h-full w-full object-cover" loading="lazy" />
+          {currentImageUrl ? (
+            <a href={currentImageUrl} target="_blank" rel="noreferrer" title={t('open_image')}>
+              <img src={currentImageUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
             </a>
           ) : (
             <div className="grid h-full w-full place-items-center border-2 border-dashed border-border-strong text-faint">
               <div className="flex flex-col items-center gap-1 text-[11px]">
                 <ImageOff size={18} strokeWidth={1.5} />
-                {t('no_image')}
+                {isStartTab ? t('no_start_image') : t('no_end_image')}
               </div>
             </div>
           )}
           <span className="absolute top-1.5 left-1.5 grid h-6 min-w-6 place-items-center rounded-md bg-black/60 px-1.5 text-[11px] font-semibold text-white backdrop-blur">
             {index + 1}
+            <span className="ml-1 text-[9px] font-normal text-muted-light">
+              {isStartTab ? '首' : '尾'}
+            </span>
           </span>
-          {scene.image_stale && (
+          {currentImageStale && (
             <span className="absolute right-1.5 bottom-1.5">
               <StaleChip />
             </span>
           )}
-          {uploading === 'image' && (
+          {currentUploading && (
             <div className="absolute inset-0 grid place-items-center bg-black/50 text-white">
               <Spinner />
             </div>
           )}
         </div>
 
-        {/* Image toolbar: regenerate / upload / download */}
+        {/* Frame toolbar: regenerate / upload / download */}
         <div className="grid grid-cols-3 gap-1">
           <button
             type="button"
             className="btn-ghost btn-icon h-7 w-full"
             disabled={disabled}
-            onClick={() => void run(() => actions.regenerate(scene.id, ['image']))}
-            title={t('regen_image')}
-            aria-label={t('regen_image')}
+            onClick={() =>
+              void run(() => actions.regenerate(scene.id, [isStartTab ? 'image' : 'end_image']))
+            }
+            title={isStartTab ? t('regen_image') : t('regen_end_image')}
+            aria-label={isStartTab ? t('regen_image') : t('regen_end_image')}
           >
             <RefreshCw size={13} />
           </button>
@@ -228,29 +281,37 @@ export default function SceneCard({
             type="button"
             className="btn-ghost btn-icon h-7 w-full"
             disabled={disabled}
-            onClick={() => imageInput.current?.click()}
-            title={t('upload_image')}
-            aria-label={t('upload_image')}
+            onClick={() => (isStartTab ? imageInput.current?.click() : endImageInput.current?.click())}
+            title={isStartTab ? t('upload_image') : t('upload_end_image')}
+            aria-label={isStartTab ? t('upload_image') : t('upload_end_image')}
           >
             <Upload size={13} />
           </button>
-          {scene.image_url ? (
+          {currentImageUrl ? (
             <a
               className="btn-ghost btn-icon h-7 w-full"
-              href={`${scene.image_url}?download=${encodeURIComponent(`scene${String(index + 1).padStart(2, '0')}`)}`}
+              href={`${currentImageUrl}?download=${encodeURIComponent(
+                `scene${String(index + 1).padStart(2, '0')}_${isStartTab ? 'start' : 'end'}`,
+              )}`}
               download
-              title={t('download_image')}
-              aria-label={t('download_image')}
+              title={isStartTab ? t('download_image') : t('download_end_image')}
+              aria-label={isStartTab ? t('download_image') : t('download_end_image')}
             >
               <Download size={13} />
             </a>
           ) : (
-            <button type="button" className="btn-ghost btn-icon h-7 w-full" disabled title={t('download_image')}>
+            <button
+              type="button"
+              className="btn-ghost btn-icon h-7 w-full"
+              disabled
+              title={isStartTab ? t('download_image') : t('download_end_image')}
+            >
               <Download size={13} />
             </button>
           )}
         </div>
 
+        {/* Video preview / placeholder */}
         {aiVideo &&
           (scene.video_url ? (
             <video
@@ -275,6 +336,7 @@ export default function SceneCard({
 
       {/* Body */}
       <div className="min-w-0 flex-1 space-y-3">
+        <StoryboardFields scene={scene} library={library} groups={groups} disabled={disabled} actions={actions} />
         <div className="flex flex-wrap items-center gap-2">
           <SceneStatusDot status={scene.status} error={scene.error} />
           <span className="inline-flex items-center gap-1 text-[11px] text-muted tabular-nums">
@@ -327,6 +389,7 @@ export default function SceneCard({
               aiVideo={aiVideo}
               onRegenerate={(kinds) => void run(() => actions.regenerate(scene.id, kinds))}
               onUploadImage={() => imageInput.current?.click()}
+              onUploadEndImage={() => endImageInput.current?.click()}
               onUploadAudio={() => audioInput.current?.click()}
               onAddBelow={() => void run(() => actions.addBelow(scene.id))}
               onRemove={() => actions.remove(scene.id)}
@@ -363,9 +426,16 @@ export default function SceneCard({
           </div>
         )}
 
-        <div>
-          {label('image_prompt', t('image_prompt'))}
-          {textarea('image_prompt', t('image_prompt_placeholder'))}
+        {/* Dual Keyframe Prompts */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            {label('image_prompt', t('image_prompt'))}
+            {textarea('image_prompt', t('image_prompt_placeholder'))}
+          </div>
+          <div>
+            {label('end_image_prompt', t('end_image_prompt'))}
+            {textarea('end_image_prompt', t('end_image_prompt_placeholder'))}
+          </div>
         </div>
 
         {aiVideo && (
@@ -402,6 +472,16 @@ export default function SceneCard({
         className="hidden"
         onChange={(e) => {
           void onFile('image', e.target.files?.[0])
+          e.target.value = ''
+        }}
+      />
+      <input
+        ref={endImageInput}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          void onFile('end_image', e.target.files?.[0])
           e.target.value = ''
         }}
       />

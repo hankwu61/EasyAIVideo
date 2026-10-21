@@ -5,10 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional
 
+from pydantic import BaseModel
+
 from ..db import Database
 from ..models import EpisodeUpdate, Project, ProjectCreate, ProjectUpdate, Scene, SceneCreate, SceneUpdate, new_id
 from ..presets import style_prompt
-from . import ffmpeg, series, storage
+from . import ffmpeg, series, storage, storyboard
 from .pipeline import refresh_project_status
 from .source_loader import extract_text
 
@@ -64,6 +66,11 @@ class ProjectService:
     async def update(self, project_id: str, body: ProjectUpdate) -> Project:
         project = await self.get(project_id)
         patch = body.model_dump(exclude_unset=True)
+        if "video_mode" in patch and patch["video_mode"] != project.video_mode:
+            for scene in project.scenes:
+                scene.video_stale = bool(scene.video_path)
+                storage.remove(scene.segment_path)
+                scene.segment_path = None
         if "style_id" in patch and "style_prompt" not in patch and patch["style_id"] != project.style_id:
             patch["style_prompt"] = style_prompt(patch["style_id"]) or project.style_prompt
         if body.characters is not None:
@@ -80,8 +87,9 @@ class ProjectService:
             series.assign_character_ids(project)
             patch.pop("characters", None)
         for key, value in patch.items():
-            if key in ("overview", "locations"):
-                setattr(project, key, getattr(body, key))
+            body_val = getattr(body, key, None)
+            if isinstance(body_val, BaseModel) or key in ("overview", "locations", "publish_settings"):
+                setattr(project, key, body_val)
             else:
                 setattr(project, key, value)
         refresh_project_status(project)
@@ -108,6 +116,47 @@ class ProjectService:
     async def update_scene(self, project_id: str, scene_id: str, body: SceneUpdate) -> Project:
         project = await self.get(project_id)
         scene = self._scene(project, scene_id)
+        if project.active_task:
+            raise ValueError("生成中，請完成或取消任務後再修改分鏡。")
+        if body.stage_positions is not None and body.stage_positions != scene.stage_positions:
+            ids = [p.character_id for p in body.stage_positions]
+            if len(ids) != len(set(ids)):
+                raise ValueError("同一角色不能重複安排站位。")
+            scene.stage_positions = body.stage_positions
+            scene.image_stale = bool(scene.image_path)
+            scene.end_image_stale = bool(scene.end_image_path)
+            scene.video_stale = bool(scene.video_path)
+            storage.remove(scene.segment_path)
+            scene.segment_path = None
+        if body.group is not None:
+            scene.group = body.group.strip()
+        if body.asset_ids is not None:
+            owner = await self.get(project.parent_id) if project.parent_id else project
+            available = {a.id: a for a in storyboard.catalog(owner)}
+            if any(aid not in available for aid in body.asset_ids):
+                raise ValueError("引用資產不存在，請重新選取。")
+            bindings = [available[aid].model_copy(deep=True) for aid in dict.fromkeys(body.asset_ids)]
+            if bindings != scene.asset_bindings:
+                # Freeze reference bytes too: later library regeneration must not
+                # change or remove the reference selected for this shot.
+                import shutil
+                for asset in bindings:
+                    if asset.image_path and storage.abs_path(asset.image_path).is_file():
+                        source = storage.abs_path(asset.image_path)
+                        rel = storage.scene_rel(project.id, scene.id, "bound", source.suffix.lstrip("."))
+                        target = storage.abs_path(rel)
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(source, target)
+                        sidecar = source.with_suffix(source.suffix + ".source.json")
+                        if sidecar.is_file():
+                            shutil.copy2(sidecar, target.with_suffix(target.suffix + ".source.json"))
+                        asset.image_path = rel
+                scene.asset_bindings = bindings
+                scene.image_stale = bool(scene.image_path)
+                scene.end_image_stale = bool(scene.end_image_path)
+                scene.video_stale = bool(scene.video_path)
+                storage.remove(scene.segment_path)
+                scene.segment_path = None
         text_changed = False
         if body.lines is not None:
             new_lines = [ln for ln in body.lines if ln.text.strip()]
@@ -125,9 +174,17 @@ class ProjectService:
         if body.image_prompt is not None and body.image_prompt != scene.image_prompt:
             scene.image_prompt = body.image_prompt
             scene.image_stale = bool(scene.image_path)
+        if body.end_image_prompt is not None and body.end_image_prompt != scene.end_image_prompt:
+            scene.end_image_prompt = body.end_image_prompt
+            scene.end_image_stale = bool(scene.end_image_path)
         if body.video_prompt is not None and body.video_prompt != scene.video_prompt:
             scene.video_prompt = body.video_prompt
             scene.video_stale = bool(scene.video_path)
+        if body.tts_speed is not None and body.tts_speed != scene.tts_speed:
+            scene.tts_speed = body.tts_speed
+            scene.audio_stale = bool(scene.audio_path)
+            storage.remove(scene.segment_path)
+            scene.segment_path = None
         scene.error = None
         refresh_project_status(project)
         await self.db.save_project(project)
@@ -135,7 +192,13 @@ class ProjectService:
 
     async def add_scene(self, project_id: str, body: SceneCreate) -> Project:
         project = await self.get(project_id)
-        scene = Scene(id=project.next_scene_id(), narration=body.narration, image_prompt=body.image_prompt)
+        scene = Scene(
+            id=project.next_scene_id(),
+            group=body.group or (self._scene(project, body.after).group if body.after else ""),
+            narration=body.narration,
+            image_prompt=body.image_prompt,
+            end_image_prompt=body.end_image_prompt or "",
+        )
         pos = len(project.scenes)
         if body.after:
             pos = next((i + 1 for i, s in enumerate(project.scenes) if s.id == body.after), pos)
@@ -148,7 +211,9 @@ class ProjectService:
     async def delete_scene(self, project_id: str, scene_id: str) -> Project:
         project = await self.get(project_id)
         scene = self._scene(project, scene_id)
-        for rel in (scene.audio_path, scene.image_path, scene.video_path, scene.segment_path):
+        for version in scene.media_history:
+            storage.remove(version.path)
+        for rel in (scene.audio_path, scene.image_path, scene.end_image_path, scene.video_path, scene.segment_path):
             storage.remove(rel)
         project.scenes = [s for s in project.scenes if s.id != scene_id]
         project.reindex()
@@ -163,15 +228,20 @@ class ProjectService:
             raise ValueError("scene_ids must contain every scene exactly once")
         project.scenes = [by_id[i] for i in scene_ids]
         project.reindex()
+        refresh_project_status(project)
         await self.db.save_project(project)
         return await self.get(project_id)
 
     async def upload_asset(self, project_id: str, scene_id: str, kind: str, filename: str, data: bytes) -> Project:
         project = await self.get(project_id)
         scene = self._scene(project, scene_id)
-        ext = (Path(filename).suffix.lstrip(".") or {"image": "png", "audio": "mp3", "video": "mp4"}[kind]).lower()
-        stem = {"image": "image", "audio": "audio", "video": "clip"}[kind]
-        if kind == "image":
+        if project.active_task:
+            raise ValueError("生成中，請稍後再上傳素材。")
+        default_exts = {"image": "png", "end_image": "png", "audio": "mp3", "video": "mp4"}
+        stems = {"image": "image", "end_image": "end_image", "audio": "audio", "video": "clip"}
+        ext = (Path(filename).suffix.lstrip(".") or default_exts.get(kind, "png")).lower()
+        stem = stems.get(kind, "asset")
+        if kind in ("image", "end_image"):
             try:
                 from io import BytesIO
 
@@ -186,16 +256,20 @@ class ProjectService:
         path = storage.abs_path(rel)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
-        if kind != "image":
+        if kind not in ("image", "end_image"):
             try:
                 probed = await ffmpeg.probe_duration(path)
             except Exception as exc:  # noqa: BLE001
                 path.unlink(missing_ok=True)
                 raise ValueError("上傳的檔案無法被 ffmpeg 讀取，請確認是有效的音訊／影片檔。") from exc
         if kind == "image":
-            storage.remove(scene.image_path)
+            storyboard.remember(scene, "image")
             scene.image_path, scene.image_stale = rel, False
             scene.video_stale = bool(scene.video_path)  # the clip's first frame changed
+        elif kind == "end_image":
+            storyboard.remember(scene, "end_image")
+            scene.end_image_path, scene.end_image_stale = rel, False
+            scene.video_stale = bool(scene.video_path)  # the clip's last frame changed
         elif kind == "audio":
             storage.remove(scene.audio_path)
             scene.audio_path, scene.audio_stale = rel, False
@@ -203,8 +277,29 @@ class ProjectService:
             for ln in scene.lines:
                 ln.duration = None  # per-line timing unknown for uploaded audio
         else:
-            storage.remove(scene.video_path)
+            storyboard.remember(scene, "video")
             scene.video_path, scene.video_stale = rel, False
+        storage.remove(scene.segment_path)
+        scene.segment_path = None
+        storyboard.remember(scene, kind)
+        scene.error = None
+        refresh_project_status(project)
+        await self.db.save_project(project)
+        return await self.get(project_id)
+
+    async def select_version(self, project_id, scene_id, version_id):
+        project = await self.get(project_id)
+        if project.active_task:
+            raise ValueError("生成中，請稍後再切換版本。")
+        scene = self._scene(project, scene_id)
+        version = next((v for v in scene.media_history if v.id == version_id), None)
+        if not version or not storage.abs_path(version.path).is_file():
+            raise ValueError("版本不存在或檔案已遺失。")
+        storyboard.remember(scene, version.kind)
+        setattr(scene, f"{version.kind}_path", version.path)
+        setattr(scene, f"{version.kind}_stale", False)
+        if version.kind != "video":
+            scene.video_stale = bool(scene.video_path)
         storage.remove(scene.segment_path)
         scene.segment_path = None
         scene.error = None

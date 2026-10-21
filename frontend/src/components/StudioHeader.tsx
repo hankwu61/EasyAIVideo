@@ -18,6 +18,7 @@ interface StudioHeaderProps {
   onReview: () => void
   onPublish: () => void
   onAll: () => void
+  onViewH3?: () => void
 }
 
 export function BackLink({ to = '/', label }: { to?: string; label?: string }) {
@@ -43,6 +44,7 @@ export default function StudioHeader({
   onReview,
   onPublish,
   onAll,
+  onViewH3,
 }: StudioHeaderProps) {
   const { t } = useLang()
   const hasScenes = project.scenes.length > 0
@@ -111,6 +113,16 @@ export default function StudioHeader({
           <Share2 size={15} />
           {t('publish_button')}
         </button>
+        {(project.h3_prompt || project.forensic_report) && (
+          <button
+            type="button"
+            className="btn-secondary border-accent/50 bg-accent/15 text-accent font-medium shadow-sm hover:bg-accent/25"
+            onClick={onViewH3}
+          >
+            <Sparkles size={15} />
+            {t('view_h3_dossier')}
+          </button>
+        )}
         <button type="button" className="btn-primary" disabled={busy} onClick={onAll}>
           {busy ? <Spinner size={15} /> : <Sparkles size={15} />}
           {t('gen_all')}

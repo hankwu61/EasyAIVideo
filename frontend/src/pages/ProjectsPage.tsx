@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Clapperboard, Plus } from 'lucide-react'
+import { Clapperboard, Copy, Plus, Sparkles } from 'lucide-react'
 import { deleteProject, errorMessage, listProjects } from '../api'
 import ConfirmDialog from '../components/ConfirmDialog'
 import ProjectCard from '../components/ProjectCard'
+import SingleVideoModal from '../components/SingleVideoModal'
+import CloneVideoModal from '../components/CloneVideoModal'
 import { useToast } from '../components/Toast'
 import { ErrorAlert, PageHeader, Skeleton } from '../components/ui'
 import { useLang } from '../i18n'
@@ -16,6 +18,8 @@ export default function ProjectsPage() {
   const [error, setError] = useState<string | null>(null)
   const [pendingDelete, setPendingDelete] = useState<ProjectSummary | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [quickVideoOpen, setQuickVideoOpen] = useState(false)
+  const [cloneModalOpen, setCloneModalOpen] = useState(false)
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setError(null)
@@ -60,10 +64,28 @@ export default function ProjectsPage() {
         title={t('projects_title')}
         subtitle={t('projects_subtitle')}
         actions={
-          <Link to="/new" className="btn-primary">
-            <Plus size={16} />
-            {t('new_project')}
-          </Link>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setCloneModalOpen(true)}
+              className="btn-secondary flex items-center gap-1.5 border-purple-500/30 bg-purple-500/10 text-purple-300 hover:bg-purple-500/20"
+            >
+              <Copy size={16} className="text-purple-400" />
+              <span>{t('clone_video')}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setQuickVideoOpen(true)}
+              className="btn-secondary flex items-center gap-1.5"
+            >
+              <Sparkles size={16} className="text-accent" />
+              <span>{t('single_video')}</span>
+            </button>
+            <Link to="/new" className="btn-primary">
+              <Plus size={16} />
+              {t('new_project')}
+            </Link>
+          </div>
         }
       />
 
@@ -114,6 +136,20 @@ export default function ProjectsPage() {
         confirmLabel={t('delete')}
         onConfirm={() => void confirmDelete()}
         onCancel={() => !deleting && setPendingDelete(null)}
+      />
+      <SingleVideoModal
+        isOpen={quickVideoOpen}
+        onClose={() => {
+          setQuickVideoOpen(false)
+          void load(true)
+        }}
+      />
+      <CloneVideoModal
+        isOpen={cloneModalOpen}
+        onClose={() => {
+          setCloneModalOpen(false)
+          void load(true)
+        }}
       />
     </div>
   )

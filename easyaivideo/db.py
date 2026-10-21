@@ -76,9 +76,11 @@ class Database:
             return Project.model_validate_json(row.data) if row else None
 
     async def save_project(self, project: Project) -> Project:
-        from .models import now_iso
+        from .models import ProjectPublishSettings, now_iso
 
         project.updated_at = now_iso()
+        if isinstance(project.publish_settings, dict):
+            project.publish_settings = ProjectPublishSettings(**project.publish_settings)
         payload = project.model_dump_json(exclude={"active_task"})
         async with self.session() as s:
             row = await s.get(ProjectRow, project.id)

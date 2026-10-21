@@ -13,7 +13,7 @@ import {
 } from 'lucide-react'
 import { cancelPublishSchedule, errorMessage, patchProject, publishProject } from '../api'
 import { useLang } from '../i18n'
-import type { Project, ProjectPublishSettings, PublishPlatform, PublishPrivacy } from '../types'
+import type { Project, ProjectPublishSettings, PublishPlatform, PublishPrivacy, Task } from '../types'
 import { useToast } from './Toast'
 import { Spinner } from './ui'
 
@@ -22,7 +22,7 @@ interface PublishModalProps {
   isOpen: boolean
   onClose: () => void
   onProjectUpdated: (p: Project) => void
-  onPublishTriggered?: () => void
+  onPublishTriggered?: (task?: Task) => void
 }
 
 export default function PublishModal({
@@ -88,14 +88,19 @@ export default function PublishModal({
     }
     setPublishingNow(true)
     try {
-      await patchProject(project.id, { publish_settings: settings })
-      await publishProject(project.id, {
+      const nextSettings: ProjectPublishSettings = {
+        ...settings,
+        schedule_mode: 'immediate',
+        schedule_time: null,
+      }
+      await patchProject(project.id, { publish_settings: nextSettings })
+      const task = await publishProject(project.id, {
         platforms: settings.platforms,
         privacy: settings.privacy,
         schedule_time: null, // immediate
       })
       toast.success(t('publish_status_publishing'))
-      onPublishTriggered?.()
+      onPublishTriggered?.(task)
       onClose()
     } catch (e) {
       toast.error(errorMessage(e))

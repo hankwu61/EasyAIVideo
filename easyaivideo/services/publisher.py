@@ -108,23 +108,34 @@ class YouTubePublisher:
             return str(video_id), f"https://www.youtube.com/shorts/{video_id}"
 
     async def _get_access_token(self, client_id: str, client_secret: str, refresh_token: str) -> str:
-        if not refresh_token:
+        token_str = (refresh_token or "").strip()
+        if not token_str:
             raise PublishError("未設定 YouTube refresh_token，請至「設定 -> 社群發布」填寫。")
+        if token_str.startswith("ya29."):
+            # User provided a direct Bearer access token from Google OAuth Playground
+            return token_str
         if not client_id or not client_secret:
-            # Maybe user provided direct access token in refresh_token field
-            return refresh_token
+            return token_str
 
         token_url = "https://oauth2.googleapis.com/token"
         payload = {
             "client_id": client_id,
             "client_secret": client_secret,
-            "refresh_token": refresh_token,
+            "refresh_token": token_str,
             "grant_type": "refresh_token",
         }
         async with httpx.AsyncClient(timeout=15.0) as client:
             res = await client.post(token_url, data=payload)
             if res.status_code != 200:
-                raise PublishError(f"更新 YouTube OAuth token 失敗 ({res.status_code}): {res.text}")
+                err_text = res.text
+                if "unauthorized_client" in err_text:
+                    raise PublishError(
+                        "YouTube OAuth 憑證不匹配 (401 unauthorized_client)。"
+                        "原因：此 Refresh Token 不是由您設定的 Client ID 簽發。"
+                        "請在 OAuth Playground 右上角齒輪 ⚙️ 勾選「Use your own OAuth credentials」並填入相同的 Client ID 與 Secret 後重新授權，"
+                        "或直接將 Playground Step 2 產生的 Access Token (ya29...) 貼至設定。"
+                    )
+                raise PublishError(f"更新 YouTube OAuth token 失敗 ({res.status_code}): {err_text}")
             token = res.json().get("access_token")
             if not token:
                 raise PublishError("Google OAuth 未回傳 access_token")
@@ -366,13 +377,25 @@ class PublisherService:
                 )
                 project.publish_records.insert(0, record)
 
-        project.publish_status = "failed" if any_failed and len(project.publish_records) == 1 else "published"
+        if any_failed:
+            project.publish_status = "failed"
+        else:
+            project.publish_status = "published"
         # Clear one-time schedule once published
         if schedule_time and project.publish_status == "published":
             project.publish_settings.schedule_time = None
 
         await self.db.save_project(project)
-        await progress(1.0, "社群發布完成" if not any_failed else "部分社群發布失敗")
+        if any_failed:
+            errors = [r.error for r in project.publish_records[:len(platforms)] if r.status == "failed" and r.error]
+            err_msg = "; ".join(errors) if errors else "社群發布失敗"
+            all_current_failed = all(r.status == "failed" for r in project.publish_records[:len(platforms)])
+            if all_current_failed:
+                await progress(1.0, f"社群發布失敗: {err_msg}")
+                raise PublishError(f"社群發布失敗: {err_msg}")
+            await progress(1.0, f"部分平台發布失敗: {err_msg}")
+        else:
+            await progress(1.0, "社群發布完成")
         return project
 
     @staticmethod

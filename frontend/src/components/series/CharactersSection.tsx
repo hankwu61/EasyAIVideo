@@ -89,10 +89,10 @@ export default function CharactersSection({
             const generating = pendingImage !== null && pendingImage === c.id && imageTaskRunning
             return (
               <div key={c.key} className="flex flex-col gap-3 rounded-xl border border-border bg-bg-elev p-3">
-                <div className="flex gap-3">
-                  <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-lg border border-border bg-panel">
+                <div className="flex flex-col gap-3">
+                  <div className="relative aspect-[3/2] w-full overflow-hidden rounded-lg border border-border bg-panel">
                     {c.image_url ? (
-                      <img src={c.image_url} alt="" className="h-full w-full object-cover" loading="lazy" />
+                      <a className="block h-full w-full" href={c.image_url} target="_blank" rel="noreferrer" title="開啟角色三視圖與頭臉特寫"><img src={c.image_url} alt={`${c.name} 角色參考圖`} className="h-full w-full object-contain" loading="lazy" /></a>
                     ) : (
                       <div className="grid h-full w-full place-items-center text-faint">
                         <User size={30} strokeWidth={1.25} />
@@ -134,6 +134,7 @@ export default function CharactersSection({
                     onChange={(e) => edit(c.key, { description: e.target.value })}
                   />
                 </Field>
+                <p className="text-xs text-muted">角色設定圖：正面、側面、背面全身三視圖＋獨立大幅頭臉特寫（脖子以上）。既有圖片可重新生成更新。</p>
                 <Field label={t('appearance')}>
                   <textarea
                     className="input min-h-16 font-mono text-xs"

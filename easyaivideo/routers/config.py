@@ -20,7 +20,19 @@ async def health() -> dict[str, Any]:
     has_ffmpeg = ffmpeg.available()
     if not has_ffmpeg:
         warnings.insert(0, "ffmpeg not found on PATH; rendering will fail.")
-    return {"status": "ok", "version": __version__, "ffmpeg": has_ffmpeg, "config_valid": has_ffmpeg, "warnings": warnings}
+    from ..services.video_fetcher import yt_dlp_version
+
+    ytdlp = yt_dlp_version()
+    if ytdlp is None:
+        warnings.append("yt-dlp is not installed: cloning from a video URL is unavailable (run `uv sync`).")
+    return {
+        "status": "ok",
+        "version": __version__,
+        "ffmpeg": has_ffmpeg,
+        "yt_dlp": ytdlp,
+        "config_valid": has_ffmpeg,
+        "warnings": warnings,
+    }
 
 
 @router.get("/config")

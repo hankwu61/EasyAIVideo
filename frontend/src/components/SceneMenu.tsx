@@ -11,6 +11,7 @@ export default function SceneMenu({
   aiVideo,
   onRegenerate,
   onUploadImage,
+  onUploadEndImage,
   onUploadAudio,
   onAddBelow,
   onRemove,
@@ -20,6 +21,7 @@ export default function SceneMenu({
   aiVideo: boolean
   onRegenerate: (kinds: AssetKind[] | null) => void
   onUploadImage: () => void
+  onUploadEndImage: () => void
   onUploadAudio: () => void
   onAddBelow: () => void
   onRemove: () => void
@@ -49,6 +51,12 @@ export default function SceneMenu({
           <button className="menu-item" onClick={item(close, () => onRegenerate(['image']))}>
             <RefreshCw size={14} /> {t('regen_image')}
           </button>
+          <button className="menu-item" onClick={item(close, () => onRegenerate(['end_image']))}>
+            <RefreshCw size={14} /> {t('regen_end_image')}
+          </button>
+          <button className="menu-item" onClick={item(close, () => onRegenerate(['image', 'end_image']))}>
+            <Sparkles size={14} /> {t('regen_both_images')}
+          </button>
           <button className="menu-item" onClick={item(close, () => onRegenerate(['audio']))}>
             <Mic size={14} /> {t('regen_audio')}
           </button>
@@ -63,6 +71,9 @@ export default function SceneMenu({
           <div className="menu-sep" />
           <button className="menu-item" onClick={item(close, onUploadImage)}>
             <ImagePlus size={14} /> {t('upload_image')}
+          </button>
+          <button className="menu-item" onClick={item(close, onUploadEndImage)}>
+            <ImagePlus size={14} /> {t('upload_end_image')}
           </button>
           <button className="menu-item" onClick={item(close, onUploadAudio)}>
             <FileAudio size={14} /> {t('upload_audio')}

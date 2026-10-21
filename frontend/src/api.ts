@@ -13,6 +13,7 @@ import type {
   ProjectPatch,
   ProjectSummary,
   PublishRequest,
+  QuickVideoRequest,
   SceneCreate,
   ScenePatch,
   StyleOption,
@@ -24,9 +25,12 @@ import type {
   TransitionOption,
   SubtitlePositionOption,
   FontOption,
+  H3Segment,
   UploadKind,
   VoiceOption,
   Workflows,
+  SubtitleCue,
+  BurnSubtitlesOptions,
 } from './types'
 
 export class ApiError extends Error {
@@ -105,12 +109,31 @@ export const getPresets = () => request<Presets>('/api/resources/presets')
 export const getStyles = () => request<StyleOption[]>('/api/resources/styles')
 export const getVoices = () => request<VoiceOption[]>('/api/resources/voices')
 export const getBgm = () => request<BgmOption[]>('/api/resources/bgm')
+export const uploadBgm = (file: File) => {
+  const form = new FormData()
+  form.append('file', file, file.name)
+  return request<BgmOption>('/api/resources/bgm/upload', { method: 'POST', form })
+}
 export const getWorkflows = () => request<Workflows>('/api/resources/workflows')
 
 // ---------- Projects ----------
 export const listProjects = (includeEpisodes = false) =>
   request<ProjectSummary[]>(`/api/projects${includeEpisodes ? '?include_episodes=true' : ''}`)
 export const createProject = (body: ProjectCreate) => request<Project>('/api/projects', { method: 'POST', json: body })
+export const createSlideProject = (form: FormData) =>
+  request<Project>('/api/projects/slide', { method: 'POST', form })
+export const createQuickVideo = (body: QuickVideoRequest) =>
+  request<Project>('/api/projects/quick-video', { method: 'POST', json: body })
+export const cloneVideoProject = (form: FormData) =>
+  request<Project>('/api/projects/clone-video', { method: 'POST', form })
+export const getProjectH3Prompt = (id: string) =>
+  request<{ project_id: string; title: string; h3_prompt: string; forensic_report: string; h3_mode: string; segments: H3Segment[] }>(
+    `/api/projects/${encodeURIComponent(id)}/h3-prompt`
+  )
+export const updateH3Segment = (id: string, index: number, body: { prompt?: string; request_duration?: number }) =>
+  request<Project>(`/api/projects/${encodeURIComponent(id)}/h3-segments/${index}`, { method: 'PATCH', json: body })
+export const generateH3Video = (id: string, body: { segment_indexes?: number[]; force?: boolean } = {}) =>
+  request<Task>(`/api/projects/${encodeURIComponent(id)}/h3-generate`, { method: 'POST', json: body })
 export const getProject = (id: string, signal?: AbortSignal) =>
   request<Project>(`/api/projects/${encodeURIComponent(id)}`, { signal })
 export const patchProject = (id: string, body: ProjectPatch) =>
@@ -225,3 +248,45 @@ export const importTemplate = (body: { data?: string; template?: unknown }) =>
 export const getTransitions = () => request<TransitionOption[]>('/api/resources/transitions')
 export const getSubtitlePositions = () => request<SubtitlePositionOption[]>('/api/resources/subtitle-positions')
 export const getFonts = () => request<FontOption[]>('/api/resources/fonts')
+
+// ---------- Subtitles & Video Editing Studio ----------
+export const getProjectSubtitles = (projectId: string) =>
+  request<SubtitleCue[]>(`/api/projects/${encodeURIComponent(projectId)}/subtitles`)
+
+export const updateProjectSubtitles = (projectId: string, cues: SubtitleCue[]) =>
+  request<SubtitleCue[]>(`/api/projects/${encodeURIComponent(projectId)}/subtitles`, {
+    method: 'PUT',
+    json: { cues },
+  })
+
+export const burnProjectSubtitles = (projectId: string, options: BurnSubtitlesOptions = {}) =>
+  request<{ ok: boolean; burned_video_url: string; final_video_url: string }>(
+    `/api/projects/${encodeURIComponent(projectId)}/burn-subtitles`,
+    {
+      method: 'POST',
+      json: options,
+    },
+  )
+
+export const trimProjectVideo = (projectId: string, start: number, end: number) =>
+  request<{ ok: boolean; trimmed_video_url: string; duration: number }>(
+    `/api/projects/${encodeURIComponent(projectId)}/trim-video`,
+    {
+      method: 'POST',
+      json: { start, end },
+    },
+  )
+
+export const synthesizeCue = (projectId: string, text: string, voice?: string, speed?: number) =>
+  request<{ ok: boolean; audio_url: string; duration: number }>(
+    `/api/projects/${encodeURIComponent(projectId)}/synthesize-cue`,
+    {
+      method: 'POST',
+      json: { text, voice, speed },
+    },
+  )
+
+
+export const getAssetLibrary = (id: string) => request<import('./types').BoundAsset[]>(`/api/projects/${id}/asset-library`)
+export const addLibraryAsset = (id: string, form: FormData) => request<import('./types').BoundAsset[]>(`/api/projects/${id}/asset-library`, {method: 'POST', form})
+export const selectMediaVersion = (id: string, sceneId: string, versionId: string) => request<Project>(`/api/projects/${id}/scenes/${sceneId}/versions/${versionId}`, {method: 'POST'})

@@ -11,9 +11,9 @@ export interface Health {
 
 // ---------- Config ----------
 export type LlmProvider = 'openai_compat' | 'mock'
-export type TtsProvider = 'edge' | 'openai_compat' | 'silent'
+export type TtsProvider = 'edge' | 'fish_audio' | 'openai_compat' | 'silent'
 export type ImageProvider = 'placeholder' | 'openai_compat' | 'comfyui'
-export type VideoProvider = 'kenburns' | 'comfyui' | 'agnes'
+export type VideoProvider = 'kenburns' | 'comfyui' | 'agnes' | 'minimax'
 export type VideoResolution = '480p' | '720p' | '1080p'
 /** AI video generation mode: image-to-video, text-to-video, or first+last frame. */
 export type VideoMode = 'i2v' | 't2v' | 'keyframes'
@@ -27,7 +27,16 @@ export interface LlmConfig {
   temperature: number
 }
 
+export interface FishAudioConfig {
+  api_key: string
+  base_url: string
+  model: string
+  female_reference_id: string
+  male_reference_id: string
+}
+
 export interface TtsConfig {
+  fish_audio: FishAudioConfig
   provider: TtsProvider
   voice: string
   speed: number
@@ -71,6 +80,8 @@ export interface VideoConfig {
   comfyui_url: string
   comfyui_workflow: string
   fps: number
+  /** MiniMax H3 output resolution (H3: 768P / 2K, H3-Max: 480P / 768P) */
+  minimax_resolution?: '480P' | '768P' | '2K'
 }
 
 export interface RenderConfig {
@@ -280,7 +291,7 @@ export interface Workflows {
 
 // ---------- Projects ----------
 export type AspectRatio = '9:16' | '16:9' | '1:1'
-export type InputMode = 'topic' | 'script' | 'novel'
+export type InputMode = 'topic' | 'script' | 'novel' | 'slide' | 'prompt' | 'video'
 export type ProjectStatus = 'draft' | 'scripted' | 'assets_ready' | 'rendered'
 export type SceneStatus = 'pending' | 'partial' | 'ready' | 'failed'
 export type ProjectKind = 'single' | 'series' | 'episode'
@@ -361,25 +372,54 @@ export interface EpisodePatch {
   summary?: string
 }
 
+export interface BoundAsset {
+  id: string
+  kind: 'character' | 'location' | 'prop'
+  name: string
+  description: string
+  image_url: string | null
+}
+export interface MediaVersion {
+  id: string
+  kind: 'image' | 'end_image' | 'video'
+  url: string
+  created_at: string
+}
+export interface StagePosition {
+  character_id: string
+  name: string
+  x: number
+  y: number
+  facing: number
+}
+
 export interface Scene {
+  stage_positions?: StagePosition[]
+  group?: string
+  asset_bindings?: BoundAsset[]
+  media_history?: MediaVersion[]
   id: string
   index: number
   narration: string
   image_prompt: string
+  end_image_prompt?: string
   lines: SceneLine[]
   location: string | null
   audio_url: string | null
   image_url: string | null
+  end_image_url?: string | null
   video_url: string | null
   segment_url: string | null
   duration: number | null
   status: SceneStatus
   audio_stale: boolean
   image_stale: boolean
+  end_image_stale?: boolean
   /** English motion / camera description used by AI video providers. */
   video_prompt: string
   /** True after editing `video_prompt` or regenerating the image until the clip is regenerated. */
   video_stale: boolean
+  tts_speed?: number | null
   error: string | null
 }
 
@@ -424,6 +464,8 @@ export interface ProjectBase {
   final_video_url: string | null
   final_video_duration: number | null
   final_video_size: number | null
+  raw_video_url?: string | null
+  subtitles_url?: string | null
   thumbnail_url: string | null
   active_task: Task | null
   publish_settings: ProjectPublishSettings
@@ -498,6 +540,47 @@ export interface Project extends ProjectBase {
   /** Series only; [] otherwise. */
   episodes: Episode[]
   review: ProjectReview | null
+  h3_prompt?: string | null
+  forensic_report?: string | null
+  /** Web page the cloned video was downloaded from (null for uploaded files). */
+  source_url?: string | null
+  source_meta?: { title?: string; uploader?: string; extractor?: string; duration?: number; webpage_url?: string }
+  h3_mode?: H3Mode
+  h3_segments?: H3Segment[]
+  h3_use_ref_video?: boolean
+  h3_use_ref_audio?: boolean
+  h3_reference_images?: string[]
+  h3_subjects?: string
+}
+
+export type H3Mode = 'ref2va' | 't2va' | 'i2va' | 'fl2va'
+export type H3SegmentStatus = 'pending' | 'generating' | 'done' | 'failed'
+
+/** One <=15 s MiniMax H3 generation unit of a cloned video. Times are source seconds. */
+export interface H3Segment {
+  index: number
+  start: number
+  end: number
+  duration: number
+  request_duration: number
+  reason: string
+  prompt: string
+  hand_off_state: string
+  shots: { start?: number; end?: number; transition_in?: string; summary?: string }[]
+  warnings: string[]
+  ref_video_path: string | null
+  ref_audio_path: string | null
+  first_frame_path: string | null
+  last_frame_path: string | null
+  sheet_paths: string[]
+  clip_path: string | null
+  status: H3SegmentStatus
+  error: string | null
+  prompt_chars: number
+  clip_url: string | null
+  ref_video_url: string | null
+  first_frame_url: string | null
+  sheet_urls: string[]
 }
 
 /** List view: no scenes / characters / locations / episodes. */
@@ -537,6 +620,21 @@ export interface ProjectCreate {
   source_text?: string
 }
 
+export interface QuickVideoRequest {
+  prompt: string
+  title?: string
+  aspect_ratio?: AspectRatio
+  duration?: number
+  motion?: string
+  video_mode?: VideoMode | null
+  style_id?: string
+  style_prompt?: string | null
+  voice?: string
+  with_narration?: boolean
+  image_base64?: string | null
+  end_image_base64?: string | null
+}
+
 export type ProjectPatch = Partial<
   Pick<
     ProjectBase,
@@ -574,22 +672,28 @@ export type ProjectPatch = Partial<
 }
 
 export interface ScenePatch {
+  stage_positions?: StagePosition[]
+  group?: string
+  asset_ids?: string[]
   narration?: string
   image_prompt?: string
+  end_image_prompt?: string
   /** Marks the video clip stale. */
   video_prompt?: string
   /** Full list (drama mode); marks audio stale. */
   lines?: SceneLine[]
+  tts_speed?: number | null
 }
 
 export interface SceneCreate {
   after: string | null
   narration: string
   image_prompt: string
+  end_image_prompt?: string
 }
 
-export type AssetKind = 'audio' | 'image' | 'video'
-export type UploadKind = 'image' | 'audio' | 'video'
+export type AssetKind = 'audio' | 'image' | 'end_image' | 'video'
+export type UploadKind = 'image' | 'end_image' | 'audio' | 'video'
 
 export interface AssetsRequest {
   scene_ids: string[] | null
@@ -598,7 +702,7 @@ export interface AssetsRequest {
 }
 
 // ---------- Tasks ----------
-export type TaskType = 'script' | 'assets' | 'render' | 'full' | 'analyze' | 'plan' | 'character_image' | 'review' | 'publish'
+export type TaskType = 'script' | 'assets' | 'render' | 'full' | 'analyze' | 'plan' | 'character_image' | 'review' | 'publish' | 'h3_generate'
 export type TaskStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
 
 export interface Task {
@@ -619,3 +723,49 @@ export interface TaskListParams {
   active?: boolean
   limit?: number
 }
+
+// ---------- Subtitles & Post-Production ----------
+export interface SubtitleCue {
+  id: number
+  start: number
+  end: number
+  text: string
+}
+
+export type SubtitleStylePreset = 'pill' | 'punch' | 'neon' | 'gradient' | 'box' | 'outline' | 'clean'
+
+export interface SubtitleStyleConfig {
+  preset: SubtitleStylePreset
+  fontSize: number
+  textColor: string
+  bgColor: string
+  bgOpacity: number // 0 ~ 100%
+  borderRadius: number // px
+  fontFamily: string
+  fontWeight: 'normal' | 'bold' | '900'
+  strokeWidth: number // px
+  strokeColor: string
+  shadow: boolean
+  // Position coordinates in percentage of video container (0% ~ 100%)
+  x: number
+  y: number
+}
+
+export interface BurnSubtitlesOptions {
+  font_name?: string
+  font_size?: number
+  primary_color?: string
+  back_color?: string
+  border_style?: number
+  outline?: number
+  outline_color?: string
+  alignment?: number
+  margin_v?: number
+  margin_l?: number
+}
+
+export interface TrimVideoOptions {
+  start: number
+  end: number
+}
+

@@ -93,6 +93,10 @@ def split_into_episodes(text: str, target_chars: int) -> list[tuple[int, int]]:
 
 
 def pick_voice(language: str, gender: str, fallback: str) -> str:
+    if config_manager.get().tts.provider == "fish_audio":
+        from ..providers.tts.fish_audio import FEMALE, MALE
+
+        return MALE if gender == "male" else FEMALE if gender == "female" else fallback
     if config_manager.get().tts.provider != "edge":
         return fallback
     locale_prefix = {"zh-TW": "zh-TW", "zh-CN": "zh-CN", "en": "en-", "ja": "ja-", "ko": "ko-"}.get(language, language)

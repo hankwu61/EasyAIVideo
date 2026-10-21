@@ -137,6 +137,7 @@ export function LlmSection({ value, onChange, beforeTest, presets }: SectionProp
 export function TtsSection({ value, onChange, beforeTest, voices }: SectionProps<TtsConfig> & { voices: VoiceOption[] }) {
   const { t } = useLang()
   const compat = value.provider === 'openai_compat'
+  const fish = value.provider === 'fish_audio'
   return (
     <SectionCard
       title={t('sec_tts')}
@@ -145,14 +146,23 @@ export function TtsSection({ value, onChange, beforeTest, voices }: SectionProps
     >
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Field label={t('provider')}>
-          <select className="input" value={value.provider} onChange={(e) => onChange({ provider: e.target.value as TtsProvider })}>
+          <select className="input" value={value.provider} onChange={(e) => {
+            const provider = e.target.value as TtsProvider
+            onChange({ provider, voice: provider === 'fish_audio' ? 'fish-zh-TW-female' : provider === 'edge' ? 'zh-TW-HsiaoChenNeural' : 'alloy' })
+          }}>
+            <option value="fish_audio">Fish Audio API</option>
             <option value="edge">{t('provider_edge')}</option>
             <option value="openai_compat">{t('provider_openai_compat')}</option>
             <option value="silent">{t('provider_silent')}</option>
           </select>
         </Field>
         <Field label={t('default_voice')}>
-          {voices.length > 0 ? (
+          {fish ? (
+            <select className="input" value={value.voice} onChange={(e) => onChange({ voice: e.target.value })}>
+              <option value="fish-zh-TW-female">{t('fish_female')}</option>
+              <option value="fish-zh-TW-male">{t('fish_male')}</option>
+            </select>
+          ) : voices.length > 0 && !voices.some((v) => v.id.startsWith('fish-')) ? (
             <VoiceSelect voices={voices} value={value.voice} onChange={(voice) => onChange({ voice })} />
           ) : (
             <input className="input font-mono" value={value.voice} onChange={(e) => onChange({ voice: e.target.value })} />
@@ -168,6 +178,25 @@ export function TtsSection({ value, onChange, beforeTest, voices }: SectionProps
             onChange={(e) => onChange({ speed: Number(e.target.value) })}
           />
         </Field>
+        {fish && (
+          <>
+            <Field label={t('api_key')} hint={t('api_key_hint')} className="sm:col-span-2">
+              <SecretInput value={value.fish_audio.api_key} onChange={(api_key) => onChange({ fish_audio: { ...value.fish_audio, api_key } })} />
+            </Field>
+            <Field label={t('base_url')}>
+              <input className="input font-mono" value={value.fish_audio.base_url} onChange={(e) => onChange({ fish_audio: { ...value.fish_audio, base_url: e.target.value } })} />
+            </Field>
+            <Field label={t('model')}>
+              <input className="input font-mono" value={value.fish_audio.model} onChange={(e) => onChange({ fish_audio: { ...value.fish_audio, model: e.target.value } })} />
+            </Field>
+            <Field label={t('fish_female')} hint={t('fish_voice_hint')}>
+              <input className="input font-mono" placeholder="Voice ID" value={value.fish_audio.female_reference_id} onChange={(e) => onChange({ fish_audio: { ...value.fish_audio, female_reference_id: e.target.value } })} />
+            </Field>
+            <Field label={t('fish_male')} hint={t('fish_voice_hint')}>
+              <input className="input font-mono" placeholder="Voice ID" value={value.fish_audio.male_reference_id} onChange={(e) => onChange({ fish_audio: { ...value.fish_audio, male_reference_id: e.target.value } })} />
+            </Field>
+          </>
+        )}
         {compat && (
           <>
             <Field label={t('api_key')} hint={t('api_key_hint')} className="sm:col-span-2">

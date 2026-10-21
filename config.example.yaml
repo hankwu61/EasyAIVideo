@@ -12,6 +12,7 @@ llm:
   temperature: 0.8
 
 tts:
+  # fish_audio    = Fish Audio API (configure fish_audio below)
   # edge          = Microsoft Edge neural voices (free, needs internet)
   # openai_compat = OpenAI-style /audio/speech endpoint
   # silent        = silent audio with estimated duration (offline testing)
@@ -21,6 +22,12 @@ tts:
   api_key: ""
   base_url: "https://api.openai.com/v1"
   model: "tts-1"
+  fish_audio:
+    api_key: ""
+    base_url: "https://api.fish.audio/v1"
+    model: "s2.1-pro"
+    female_reference_id: ""
+    male_reference_id: ""
 
 image:
   # placeholder   = locally drawn gradient cards (offline testing)
@@ -51,7 +58,7 @@ video:
   base_url: "https://apihub.agnes-ai.com/v1"
   model: "agnes-video-v2.0"
   resolution: 720p        # 480p | 720p | 1080p (short edge; aspect follows the project)
-  mode: i2v               # i2v = scene image is the first frame; t2v = prompt only; keyframes = next scene image as last frame
+  mode: i2v               # i2v = scene image is the first frame; t2v = prompt only; keyframes = same scene start + end images (both required)
   max_clip_seconds: 10    # 1-18; longer narrations loop the clip
   concurrency: 1          # parallel video jobs (Agnes is sensitive to concurrency)
   poll_timeout: 1800

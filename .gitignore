@@ -12,3 +12,6 @@ __pycache__/
 *.log
 scratch/
 .claude/
+
+# local experiment output (videos, test requests)
+data/experiments/

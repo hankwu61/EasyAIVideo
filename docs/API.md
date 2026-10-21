@@ -261,13 +261,13 @@ image-to-image references in the `image` field; Agnes image models support this)
 
 `POST /api/config/test/video` tests the configured video provider (kenburns returns ok with a note).
 
-`GET /api/resources/presets` gained `"video_modes": [{"id":"i2v","label":"圖生影片（場景圖為首幀）"},{"id":"t2v","label":"文生影片（只用提示詞）"},{"id":"keyframes","label":"首尾幀（下一場景圖為尾幀）"}]`.
+`GET /api/resources/presets` gained `"video_modes": [{"id":"i2v","label":"圖生影片（場景圖為首幀）"},{"id":"t2v","label":"文生影片（只用提示詞）"},{"id":"keyframes","label":"首尾幀（同一分鏡的首尾圖）"}]`.
 
 `Project` gained `"video_mode": "i2v" | "t2v" | "keyframes" | null` (null = use `Config.video.mode`); accepted by `POST /api/projects` and `PATCH /api/projects/{id}`. Only meaningful when `motion == "ai_video"`.
 
 `Scene` gained `"video_prompt": "..."` (English motion / camera description used by AI video providers; the LLM fills it, the user may edit) and `"video_stale": false` (true after editing `video_prompt` or regenerating the image until the clip is regenerated). `PATCH /api/projects/{id}/scenes/{scene_id}` accepts `video_prompt`.
 
-Asset generation with `motion == "ai_video"` now runs in two phases: audio + images for all scenes, then AI video clips (serialised by `Config.video.concurrency`). In `keyframes` mode the next scene's image is used as the last frame. Clips longer than `max_clip_seconds` are looped by the renderer to match the narration length.
+Asset generation with `motion == "ai_video"` now runs in two phases: audio + images for all scenes, then AI video clips (serialised by `Config.video.concurrency`). In `keyframes` mode, the same scene’s `image_path` and `end_image_path` are required and must exist and be current. Missing frames produce an actionable error; frames from other scenes are never substituted. In `i2v` mode only the scene’s own start image is sent, even if an end image exists. Clips longer than `max_clip_seconds` are looped by the renderer to match the narration length.
 
 ---
 
@@ -277,6 +277,7 @@ Asset generation with `motion == "ai_video"` now runs in two phases: audio + ima
 - **Upload your own image**: `POST /api/projects/{id}/scenes/{scene_id}/upload/image` multipart `file` (png/jpg/webp; existing). Clears `image_stale`; the AI clip (if any) becomes stale.
 - **Download one file**: any `/api/files/...` URL accepts `?download=1` (original filename) or `?download=<name>` (custom filename, extension appended if missing) and responds with `Content-Disposition: attachment`.
 - **Download all scene images**: `GET /api/projects/{id}/scenes/images.zip` → zip containing `scene01_image.png`, `scene02_image.png`, … plus `sceneNN_clip.mp4` for AI clips. 404 when the project has no images yet.
+- **Export scene texts**: `GET /api/projects/{id}/export/text?kind=<kind>` where `kind` is `video_prompts`, `image_prompts`, `narration`, `script` (full combined script), or `zip` (all 4 files in one archive). Also accessible via `GET /api/projects/{id}/export/texts.zip`.
 
 ---
 
