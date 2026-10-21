@@ -21,7 +21,7 @@ CONFIG_PATH = Path(os.environ.get("EASYAIVIDEO_CONFIG", ROOT_DIR / "config.yaml"
 DB_PATH = DATA_DIR / "easyaivideo.db"
 
 SECRET_MASK = "***"
-SECRET_FIELDS = {"api_key", "client_secret", "refresh_token", "access_token", "secret"}
+SECRET_FIELDS = {"api_key", "client_secret", "refresh_token", "access_token", "secret", "comfy_api_key"}
 
 
 class LLMConfig(BaseModel):
@@ -73,7 +73,8 @@ class ImageConfig(BaseModel):
 class VideoConfig(BaseModel):
     # kenburns = ffmpeg animation of stills; comfyui = local image-to-video workflow;
     # agnes = Agnes AI async /v1/videos; minimax = MiniMax Hailuo H3 video generation
-    provider: Literal["kenburns", "comfyui", "agnes", "minimax"] = "kenburns"
+    # comfyui_minimax = MiniMax H3 through ComfyUI Partner Nodes (billed to the Comfy account)
+    provider: Literal["kenburns", "comfyui", "agnes", "minimax", "comfyui_minimax"] = "kenburns"
     api_key: str = ""
     base_url: str = "https://apihub.agnes-ai.com/v1"
     model: str = "agnes-video-v2.0"
@@ -87,6 +88,9 @@ class VideoConfig(BaseModel):
     fps: int = Field(30, ge=15, le=60)
     # MiniMax H3 output resolution (H3: 768P / 2K, H3-Max: 480P / 768P)
     minimax_resolution: Literal["480P", "768P", "2K"] = "768P"
+    # ComfyUI -> MiniMax H3 Partner Nodes
+    comfyui_h3_model: Literal["MiniMax H3", "MiniMax H3 Max", "MiniMax H3 Max Turbo"] = "MiniMax H3"
+    comfy_api_key: str = ""  # platform.comfy.org API key, sent as extra_data.api_key_comfy_org
 
 
 class RenderConfig(BaseModel):
@@ -253,6 +257,8 @@ class ConfigManager:
                 out.append("Video provider is 'minimax' but video.api_key looks like a URL, not an API key.")
             if "minimax" not in (cfg.video.base_url or "").lower():
                 out.append("Video provider is 'minimax' but video.base_url is not a MiniMax URL; https://api.minimax.io will be used.")
+        if cfg.video.provider == "comfyui_minimax" and not cfg.video.comfy_api_key:
+            out.append("Video provider is 'comfyui_minimax' but video.comfy_api_key (platform.comfy.org API key) is empty; Partner Nodes will fail to authenticate.")
         return out
 
 

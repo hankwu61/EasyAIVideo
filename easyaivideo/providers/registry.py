@@ -64,6 +64,10 @@ def get_video(cfg: AppConfig) -> Optional[VideoProvider]:
         from .video.minimax import MinimaxVideo
 
         return MinimaxVideo(cfg.video)
+    if cfg.video.provider == "comfyui_minimax":
+        from .video.comfyui_minimax import ComfyUIMinimaxVideo
+
+        return ComfyUIMinimaxVideo(cfg.video)
     return None
 
 

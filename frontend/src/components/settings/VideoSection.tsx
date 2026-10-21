@@ -18,6 +18,24 @@ const MINIMAX_RES: Record<string, MinimaxResolution[]> = {
   'MiniMax-H3': ['768P', '2K'],
   'MiniMax-H3-Max': ['480P', '768P'],
 }
+type ComfyH3Model = 'MiniMax H3' | 'MiniMax H3 Max' | 'MiniMax H3 Max Turbo'
+const COMFY_H3_MODELS: ComfyH3Model[] = ['MiniMax H3', 'MiniMax H3 Max', 'MiniMax H3 Max Turbo']
+const COMFY_H3_RES_KEY: Record<ComfyH3Model, string> = {
+  'MiniMax H3': 'MiniMax-H3',
+  'MiniMax H3 Max': 'MiniMax-H3-Max',
+  'MiniMax H3 Max Turbo': 'MiniMax-H3-Max',
+}
+const COMFY_H3_HINT = {
+  'MiniMax H3': 'comfy_h3_model_h3_hint',
+  'MiniMax H3 Max': 'comfy_h3_model_max_hint',
+  'MiniMax H3 Max Turbo': 'comfy_h3_model_turbo_hint',
+} as const
+/** USD per second from the ComfyUI node price badge (comfy_api_nodes/nodes_minimax.py). */
+const COMFY_H3_PRICE: Record<ComfyH3Model, Record<string, string>> = {
+  'MiniMax H3': { '768P': '0.1287', '2K': '0.1859' },
+  'MiniMax H3 Max': { '480P': '0.0715', '768P': '0.1144' },
+  'MiniMax H3 Max Turbo': { '480P': '0.03575', '768P': '0.0572' },
+}
 const AGNES_DEFAULTS = { base_url: 'https://apihub.agnes-ai.com/v1', model: 'agnes-video-2.5-flash' }
 
 /** Mirrors the backend: strip /v1 or /v2; anything that is not a MiniMax host falls back to the international API. */
@@ -35,6 +53,12 @@ function providerDefaults(provider: VideoProvider, current: VideoConfig): Partia
     if (!(current.base_url || '').toLowerCase().includes('minimax')) patch.base_url = MINIMAX_INTL
     if (!MINIMAX_MODELS.includes(current.model)) patch.model = 'MiniMax-H3'
     if (current.max_clip_seconds > 15 || current.max_clip_seconds < 4) patch.max_clip_seconds = Math.max(4, Math.min(15, current.max_clip_seconds))
+    return patch
+  }
+  if (provider === 'comfyui_minimax') {
+    const patch: Partial<VideoConfig> = {}
+    if (current.max_clip_seconds > 15 || current.max_clip_seconds < 4) patch.max_clip_seconds = Math.max(4, Math.min(15, current.max_clip_seconds))
+    if (!current.comfyui_url) patch.comfyui_url = 'http://127.0.0.1:8188'
     return patch
   }
   if (provider === 'agnes') {
@@ -69,6 +93,13 @@ export default function VideoSection({
   const comfy = value.provider === 'comfyui'
   const agnes = value.provider === 'agnes'
   const minimax = value.provider === 'minimax'
+  const comfyMinimax = value.provider === 'comfyui_minimax'
+  const cmModel: ComfyH3Model = COMFY_H3_MODELS.includes(value.comfyui_h3_model as ComfyH3Model)
+    ? (value.comfyui_h3_model as ComfyH3Model)
+    : 'MiniMax H3'
+  const cmMinSec = cmModel === 'MiniMax H3' ? 4 : 5
+  const cmResList = MINIMAX_RES[COMFY_H3_RES_KEY[cmModel]]
+  const cmRes = cmResList.includes(value.minimax_resolution ?? '768P') ? (value.minimax_resolution ?? '768P') : '768P'
   const hintKey = modeHintKey[value.mode as VideoMode]
   const mmModel = MINIMAX_MODELS.includes(value.model) ? value.model : 'MiniMax-H3'
   const mmMinSec = mmModel === 'MiniMax-H3-Max' ? 5 : 4
@@ -110,6 +141,7 @@ export default function VideoSection({
             <option value="comfyui">{t('provider_comfyui')}</option>
             <option value="agnes">{t('provider_agnes')}</option>
             <option value="minimax">{t('provider_minimax')}</option>
+            <option value="comfyui_minimax">{t('provider_comfyui_minimax')}</option>
           </select>
         </Field>
         <Field label={t('fps')}>
@@ -217,6 +249,87 @@ export default function VideoSection({
           </>
         )}
 
+        {comfyMinimax && (
+          <>
+            <Field label={t('comfyui_url')}>
+              <input
+                className="input font-mono"
+                value={value.comfyui_url}
+                placeholder="http://127.0.0.1:8188"
+                onChange={(e) => onChange({ comfyui_url: e.target.value })}
+              />
+            </Field>
+            <Field label={t('comfy_api_key')} hint={`${t('comfy_api_key_hint')} ${t('api_key_hint')}`}>
+              <SecretInput
+                value={value.comfy_api_key ?? ''}
+                onChange={(comfy_api_key) => onChange({ comfy_api_key })}
+                placeholder="comfyui-…"
+              />
+            </Field>
+            <Field label={t('model')} hint={t(COMFY_H3_HINT[cmModel])}>
+              <select
+                className="input font-mono"
+                value={cmModel}
+                onChange={(e) => {
+                  const model = e.target.value as ComfyH3Model
+                  const allowed = MINIMAX_RES[COMFY_H3_RES_KEY[model]]
+                  const res = value.minimax_resolution ?? '768P'
+                  onChange({ comfyui_h3_model: model, ...(allowed.includes(res) ? {} : { minimax_resolution: '768P' }) })
+                }}
+              >
+                {COMFY_H3_MODELS.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label={t('minimax_resolution')} hint={t('comfy_h3_price_hint', { price: COMFY_H3_PRICE[cmModel][cmRes] })}>
+              <select
+                className="input"
+                value={cmRes}
+                onChange={(e) => onChange({ minimax_resolution: e.target.value as MinimaxResolution })}
+              >
+                {MINIMAX_RES[COMFY_H3_RES_KEY[cmModel]].map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label={t('video_gen_mode')} hint={hintKey ? t(hintKey) : undefined}>
+              <select className="input" value={value.mode} onChange={(e) => onChange({ mode: e.target.value as VideoMode })}>
+                {!videoModes.some((m) => m.id === value.mode) && value.mode && (
+                  <option value={value.mode}>{value.mode}</option>
+                )}
+                {videoModes.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label={t('max_clip_seconds')} hint={t('minimax_clip_hint', { min: cmMinSec })}>
+              <NumberInput
+                value={Math.max(cmMinSec, Math.min(15, value.max_clip_seconds))}
+                onChange={(max_clip_seconds) => onChange({ max_clip_seconds })}
+                min={cmMinSec}
+                max={15}
+                step={1}
+              />
+            </Field>
+            <Field label={t('concurrency')} hint={t('minimax_concurrency_hint')}>
+              <NumberInput value={value.concurrency} onChange={(concurrency) => onChange({ concurrency })} min={1} max={4} step={1} />
+            </Field>
+            <Field label={t('poll_timeout')}>
+              <NumberInput value={value.poll_timeout} onChange={(poll_timeout) => onChange({ poll_timeout })} min={60} max={7200} step={60} />
+            </Field>
+            <p className="rounded-lg border border-accent/30 bg-accent/5 px-3 py-2 text-[11px] leading-relaxed text-muted sm:col-span-2">
+              {t('comfy_h3_modes_note')}
+            </p>
+          </>
+        )}
+
         {agnes && (
           <>
             <Field label={t('api_key')} hint={t('api_key_hint')} className="sm:col-span-2">
@@ -313,7 +426,7 @@ export default function VideoSection({
 
         <p className="flex items-start gap-2 rounded-lg border border-border bg-bg-elev px-3 py-2 text-[11px] leading-relaxed text-muted sm:col-span-2">
           <Info size={13} className="mt-0.5 shrink-0 text-accent" />
-          {minimax ? t('minimax_video_note') : t('ai_video_note')}
+          {minimax || comfyMinimax ? t('minimax_video_note') : t('ai_video_note')}
         </p>
       </div>
     </SectionCard>

@@ -586,7 +586,7 @@ const en: Record<keyof typeof zhTW, string> = {
   h3_ref_video: "Reference clip",
   h3_sheets: "Timecoded sheets",
   h3_generated_clip: "H3 output",
-  h3_need_minimax: "H3 generation needs Settings → Video provider = MiniMax with an API key.",
+  h3_need_minimax: "H3 generation needs Settings → Video provider = MiniMax H3 or ComfyUI → MiniMax H3 with its key.",
   h3_no_segments: "This project has no H3 parts (older project or standard clone mode).",
   h3_unsaved: "Unsaved",
   minimax_resolution: "MiniMax H3 resolution",
@@ -612,6 +612,14 @@ const en: Record<keyof typeof zhTW, string> = {
   minimax_concurrency_hint: "Number of H3 tasks submitted at once (H3 parts are generated in parallel too).",
   poll_timeout: "Task wait limit (s)",
   minimax_video_note: "MiniMax H3 returns clips with native sound: video-clone projects keep the H3 audio (no TTS); ordinary projects still mix TTS narration and subtitles with ffmpeg.",
+  provider_comfyui_minimax: "ComfyUI → MiniMax H3 (Partner Nodes)",
+  comfy_api_key: "Comfy platform API key",
+  comfy_api_key_hint: "Create it at platform.comfy.org (comfyui-…). Partner Nodes are billed to Comfy credits, not your MiniMax key.",
+  comfy_h3_model_h3_hint: "Text / first-last frame / reference to video; 768P or 2K; 4–15 s.",
+  comfy_h3_model_max_hint: "Faster & cheaper: text / first-last frame / reference; 480P or 768P; 5–15 s.",
+  comfy_h3_model_turbo_hint: "Fastest & cheapest: text and first-last frame only (no reference / video clone); 480P or 768P; 5–15 s.",
+  comfy_h3_price_hint: "ComfyUI price badge: about US${price} per second (Comfy credits).",
+  comfy_h3_modes_note: "Node picked automatically: no images → MiniMax H3 Text to Video; first (+ last) frame → First-Last-Frame to Video; reference images / videos / audio (video clone) → Reference to Video. Needs a recent ComfyUI (H3 Max ≥ 0.34.3); press Test to confirm the nodes exist.",
 }
 
 export default en

@@ -865,8 +865,10 @@ class Pipeline:
         cfg = config_manager.get()
         if not project.h3_segments:
             raise PipelineError("此專案沒有 H3 分段，請先用「短影片分析復刻（MiniMax H3）」建立專案。")
-        if cfg.video.provider != "minimax":
-            raise PipelineError("H3 生成需要 MiniMax：請到 設定 → 影片，將 provider 改為 minimax 並填入 API Key。")
+        if cfg.video.provider not in ("minimax", "comfyui_minimax"):
+            raise PipelineError(
+                "H3 生成需要 MiniMax：請到 設定 → 影片，將供應商改為「MiniMax H3」或「ComfyUI → MiniMax H3」並填入金鑰。"
+            )
         provider = get_video(cfg)
         if provider is None:
             raise PipelineError("無法建立 MiniMax 影片 provider。")

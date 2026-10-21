@@ -13,7 +13,7 @@ export interface Health {
 export type LlmProvider = 'openai_compat' | 'mock'
 export type TtsProvider = 'edge' | 'fish_audio' | 'openai_compat' | 'silent'
 export type ImageProvider = 'placeholder' | 'openai_compat' | 'comfyui'
-export type VideoProvider = 'kenburns' | 'comfyui' | 'agnes' | 'minimax'
+export type VideoProvider = 'kenburns' | 'comfyui' | 'agnes' | 'minimax' | 'comfyui_minimax'
 export type VideoResolution = '480p' | '720p' | '1080p'
 /** AI video generation mode: image-to-video, text-to-video, or first+last frame. */
 export type VideoMode = 'i2v' | 't2v' | 'keyframes'
@@ -82,6 +82,10 @@ export interface VideoConfig {
   fps: number
   /** MiniMax H3 output resolution (H3: 768P / 2K, H3-Max: 480P / 768P) */
   minimax_resolution?: '480P' | '768P' | '2K'
+  /** ComfyUI -> MiniMax H3 Partner Nodes */
+  comfyui_h3_model?: 'MiniMax H3' | 'MiniMax H3 Max' | 'MiniMax H3 Max Turbo'
+  /** Secret; platform.comfy.org API key, masked as "***" by the server. */
+  comfy_api_key?: string
 }
 
 export interface RenderConfig {

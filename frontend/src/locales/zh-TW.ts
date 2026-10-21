@@ -582,7 +582,7 @@ const zhTW = {
   h3_ref_video: "參考片段",
   h3_sheets: "取證時間碼圖",
   h3_generated_clip: "H3 成品",
-  h3_need_minimax: "H3 生成需要到 設定 → 影片 將 provider 設為 MiniMax 並填入 API Key。",
+  h3_need_minimax: "H3 生成需要到 設定 → 影片 將供應商設為「MiniMax H3」或「ComfyUI → MiniMax H3」並填入金鑰。",
   h3_no_segments: "此專案沒有 H3 分段（舊版專案或標準復刻模式）。",
   h3_unsaved: "尚未儲存",
   minimax_resolution: "MiniMax H3 解析度",
@@ -608,6 +608,14 @@ const zhTW = {
   minimax_concurrency_hint: "同時送出的 H3 任務數（H3 分段生成也會依此並行）。",
   poll_timeout: "任務等待上限（秒）",
   minimax_video_note: "MiniMax H3 會輸出含原生聲音的片段：「短影片分析復刻」專案直接沿用 H3 聲音（不跑 TTS）；一般專案的 AI 影片片段仍以 TTS 旁白與字幕由 ffmpeg 合成。",
+  provider_comfyui_minimax: "ComfyUI → MiniMax H3（Partner Nodes）",
+  comfy_api_key: "Comfy 平台 API Key",
+  comfy_api_key_hint: "在 platform.comfy.org 建立（comfyui-…）；Partner Node 由 Comfy 帳戶點數計費，不使用 MiniMax 金鑰。",
+  comfy_h3_model_h3_hint: "文生／首尾幀／參考生影片皆可；768P 或 2K；4–15 秒。",
+  comfy_h3_model_max_hint: "較快較省：文生／首尾幀／參考生影片；480P 或 768P；5–15 秒。",
+  comfy_h3_model_turbo_hint: "最快最省：僅文生與首尾幀（不支援參考生影片與短影片復刻）；480P 或 768P；5–15 秒。",
+  comfy_h3_price_hint: "ComfyUI 節點標示約 US${price}／秒（由 Comfy 點數扣除）。",
+  comfy_h3_modes_note: "自動選擇節點：沒有圖片 → MiniMax H3 Text to Video；有首幀（＋尾幀）→ First-Last-Frame to Video；參考圖片／影片／音訊（短影片復刻）→ Reference to Video。需 ComfyUI 新版（H3 Max ≥ 0.34.3）；請按「測試連線」確認節點存在。",
 }
 
 export default zhTW

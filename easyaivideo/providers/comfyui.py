@@ -65,11 +65,38 @@ class ComfyUIClient:
         sub = data.get("subfolder", "")
         return f"{sub}/{name}" if sub else name
 
-    async def run(self, workflow: dict[str, Any], timeout: float = 1800) -> dict[str, Any]:
-        """Queue a prompt and wait for its history entry. Returns the outputs dict."""
+    async def upload_file(self, path: Path) -> str:
+        """Upload any input file (image / video / audio) into ComfyUI's input folder; returns its name."""
+        import mimetypes
+
+        mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        async with httpx.AsyncClient(timeout=300) as client:
+            with path.open("rb") as fh:
+                resp = await client.post(
+                    f"{self.base_url}/upload/image",
+                    files={"image": (path.name, fh, mime)},
+                    data={"overwrite": "true", "type": "input"},
+                )
+        if resp.status_code >= 400:
+            raise ProviderError(f"ComfyUI upload failed: HTTP {resp.status_code} {resp.text[:200]}")
+        data = resp.json()
+        name = data.get("name", path.name)
+        sub = data.get("subfolder", "")
+        return f"{sub}/{name}" if sub else name
+
+    async def run(
+        self, workflow: dict[str, Any], timeout: float = 1800, extra_data: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Queue a prompt and wait for its history entry. Returns the outputs dict.
+
+        ``extra_data`` is passed through to ComfyUI (e.g. ``api_key_comfy_org`` for Partner/API nodes).
+        """
+        body: dict[str, Any] = {"prompt": workflow, "client_id": self.client_id}
+        if extra_data:
+            body["extra_data"] = extra_data
         async with httpx.AsyncClient(timeout=30) as client:
             try:
-                resp = await client.post(f"{self.base_url}/prompt", json={"prompt": workflow, "client_id": self.client_id})
+                resp = await client.post(f"{self.base_url}/prompt", json=body)
             except httpx.HTTPError as exc:
                 raise ProviderError(f"Cannot reach ComfyUI at {self.base_url}: {exc}") from exc
             if resp.status_code >= 400:
@@ -95,6 +122,8 @@ class ComfyUIClient:
                 outputs = entry.get("outputs", {})
                 if outputs:
                     return outputs
+                if status.get("completed") and status.get("status_str") == "success":
+                    raise ProviderError("ComfyUI finished without any output (check the SaveVideo node).")
         raise ProviderError("ComfyUI execution timed out.")
 
     async def download(self, item: dict[str, Any], output_path: Path) -> Path:
